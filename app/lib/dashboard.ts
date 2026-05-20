@@ -86,7 +86,15 @@ export const dashboardRoutes: DashboardRoute[] = [
     eyebrow: "Catalog",
     title: "Services",
     description: "Structure the service catalog for prep actions, storage plans, and custom work.",
-    status: "Draft",
+    status: "Setup",
+  },
+  {
+    href: "/client-pricing-overrides",
+    label: "Client Pricing",
+    eyebrow: "Pricing",
+    title: "Client Pricing Overrides",
+    description: "Set client-specific service pricing that overrides catalog defaults.",
+    status: "Setup",
   },
   {
     href: "/reports",

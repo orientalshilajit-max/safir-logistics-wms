@@ -148,6 +148,57 @@ export type Database = {
         };
         Relationships: [];
       };
+      client_pricing_overrides: {
+        Row: {
+          active: boolean;
+          client_id: string;
+          created_at: string;
+          deleted_at: string | null;
+          id: string;
+          notes: string | null;
+          override_price: number;
+          service_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          client_id: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          notes?: string | null;
+          override_price: number;
+          service_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          client_id?: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          notes?: string | null;
+          override_price?: number;
+          service_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "client_pricing_overrides_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "client_pricing_overrides_service_id_fkey";
+            columns: ["service_id"];
+            isOneToOne: false;
+            referencedRelation: "services";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       incoming_items: {
         Row: {
           created_at: string;
@@ -380,6 +431,69 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      services: {
+        Row: {
+          active: boolean;
+          category: string;
+          created_at: string;
+          default_price: number;
+          deleted_at: string | null;
+          description: string | null;
+          id: string;
+          name: string;
+          pricing_type:
+            | "per_unit"
+            | "per_box"
+            | "per_shipment"
+            | "per_pallet"
+            | "per_order"
+            | "per_month"
+            | "manual";
+          updated_at: string;
+          visible_to_client: boolean;
+        };
+        Insert: {
+          active?: boolean;
+          category: string;
+          created_at?: string;
+          default_price?: number;
+          deleted_at?: string | null;
+          description?: string | null;
+          id?: string;
+          name: string;
+          pricing_type:
+            | "per_unit"
+            | "per_box"
+            | "per_shipment"
+            | "per_pallet"
+            | "per_order"
+            | "per_month"
+            | "manual";
+          updated_at?: string;
+          visible_to_client?: boolean;
+        };
+        Update: {
+          active?: boolean;
+          category?: string;
+          created_at?: string;
+          default_price?: number;
+          deleted_at?: string | null;
+          description?: string | null;
+          id?: string;
+          name?: string;
+          pricing_type?:
+            | "per_unit"
+            | "per_box"
+            | "per_shipment"
+            | "per_pallet"
+            | "per_order"
+            | "per_month"
+            | "manual";
+          updated_at?: string;
+          visible_to_client?: boolean;
+        };
+        Relationships: [];
       };
       statuses: {
         Row: {
