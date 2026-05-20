@@ -1,0 +1,146 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { dashboardRoutes } from "@/app/lib/dashboard";
+import { LogoutButton } from "@/app/components/logout-button";
+
+const statusStyles = {
+  Live: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  Setup: "border-blue-200 bg-blue-50 text-blue-700",
+  Draft: "border-slate-200 bg-slate-100 text-slate-600",
+};
+
+export function DashboardShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-950">
+      <div className="flex min-h-screen">
+        <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:block">
+          <SidebarContent pathname={pathname} />
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
+            <div className="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Safir Logistics
+                </p>
+                <h1 className="truncate text-lg font-semibold text-slate-950">
+                  Prep Center WMS
+                </h1>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600 sm:inline-flex">
+                  Light workspace
+                </span>
+                <LogoutButton />
+                <div className="flex size-10 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
+                  SL
+                </div>
+              </div>
+            </div>
+            <nav className="flex gap-2 overflow-x-auto border-t border-slate-100 px-4 py-3 lg:hidden">
+              {dashboardRoutes.map((item) => (
+                <MobileNavLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  active={pathname === item.href}
+                />
+              ))}
+            </nav>
+          </header>
+
+          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-7xl">{children}</div>
+          </main>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarContent({ pathname }: { pathname: string }) {
+  return (
+    <div className="flex h-screen flex-col">
+      <div className="border-b border-slate-200 px-6 py-5">
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-lg bg-slate-950 text-sm font-semibold text-white">
+            SL
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-950">Safir WMS</p>
+            <p className="text-xs text-slate-500">Prep center operations</p>
+          </div>
+        </div>
+      </div>
+
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        {dashboardRoutes.map((item) => {
+          const active = pathname === item.href;
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={[
+                "group flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium transition",
+                active
+                  ? "bg-slate-950 text-white shadow-sm"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+              ].join(" ")}
+            >
+              <span>{item.label}</span>
+              <span
+                className={[
+                  "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                  active
+                    ? "border-white/20 bg-white/10 text-white"
+                    : statusStyles[item.status],
+                ].join(" ")}
+              >
+                {item.status}
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="border-t border-slate-200 p-4">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-950">Split panel ready</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Pages are structured for future detail drawers, queue previews, and side-by-side workflows.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MobileNavLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={[
+        "shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition",
+        active
+          ? "bg-slate-950 text-white"
+          : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-950",
+      ].join(" ")}
+    >
+      {label}
+    </Link>
+  );
+}
