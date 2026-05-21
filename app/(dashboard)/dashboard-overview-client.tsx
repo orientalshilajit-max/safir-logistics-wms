@@ -130,9 +130,13 @@ function Metric({
         <p className="text-sm font-medium text-slate-500">{label}</p>
         <StatusBadge tone="emerald">Live</StatusBadge>
       </div>
-      <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-950">
-        {loading ? "..." : value}
-      </p>
+      {loading ? (
+        <div className="mt-5 h-9 w-24 animate-pulse rounded-md bg-slate-100" />
+      ) : (
+        <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">
+          {value}
+        </p>
+      )}
     </div>
   );
 }

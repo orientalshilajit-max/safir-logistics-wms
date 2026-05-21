@@ -9,8 +9,10 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
+  QuickFilterButton,
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
@@ -64,6 +66,7 @@ export function IncomingShipmentsClient() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +74,13 @@ export function IncomingShipmentsClient() {
   const availableProducts = useMemo(
     () => products.filter((product) => product.client_id === form.client_id),
     [form.client_id, products],
+  );
+  const filteredShipments = useMemo(
+    () =>
+      shipments.filter(
+        (shipment) => statusFilter === "all" || shipment.statuses?.name === statusFilter,
+      ),
+    [shipments, statusFilter],
   );
 
   useEffect(() => {
@@ -144,6 +154,10 @@ export function IncomingShipmentsClient() {
   }
 
   function removeLine(index: number) {
+    if (!window.confirm("Remove this product line?")) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       lines: current.lines.filter((_, currentIndex) => currentIndex !== index),
@@ -152,17 +166,36 @@ export function IncomingShipmentsClient() {
 
   async function createShipment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
-    const validLines = form.lines.filter(
-      (line) => line.product_id && Number(line.expected_quantity) >= 0,
-    );
+    const numberOfBoxes = Number(form.number_of_boxes);
+    const validLines = form.lines.filter((line) => line.product_id);
 
     if (validLines.length === 0) {
       setError("Add at least one product line.");
       setSaving(false);
       return;
+    }
+
+    if (!Number.isInteger(numberOfBoxes) || numberOfBoxes < 0) {
+      setError("Box count must be a whole number zero or greater.");
+      setSaving(false);
+      return;
+    }
+
+    for (const line of validLines) {
+      const expectedQuantity = Number(line.expected_quantity);
+
+      if (!Number.isInteger(expectedQuantity) || expectedQuantity < 0) {
+        setError("Expected quantities must be whole numbers zero or greater.");
+        setSaving(false);
+        return;
+      }
     }
 
     const { data: shipment, error: shipmentError } = await supabase
@@ -174,7 +207,7 @@ export function IncomingShipmentsClient() {
           .split(/[\n,]+/)
           .map((value) => value.trim())
           .filter(Boolean),
-        number_of_boxes: Number(form.number_of_boxes) || 0,
+        number_of_boxes: numberOfBoxes,
         expected_arrival_date: form.expected_arrival_date || null,
         notes: form.notes.trim() || null,
         status_id: form.status_id,
@@ -225,14 +258,31 @@ export function IncomingShipmentsClient() {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_28rem]">
         <Panel title="Shipment list" description="Inbound records from Supabase.">
+          <div className="mb-4 flex flex-wrap gap-2">
+            <QuickFilterButton active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
+              All
+            </QuickFilterButton>
+            {statuses.slice(0, 5).map((status) => (
+              <QuickFilterButton
+                key={status.id}
+                active={statusFilter === status.name}
+                onClick={() => setStatusFilter(status.name)}
+              >
+                {status.name}
+              </QuickFilterButton>
+            ))}
+          </div>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading shipments...</p>
-          ) : shipments.length === 0 ? (
-            <EmptyState title="No incoming shipments" body="Create an inbound shipment to populate the receiving queue." />
+            <LoadingState label="Loading shipments..." />
+          ) : filteredShipments.length === 0 ? (
+            <EmptyState
+              title="No shipments match this view"
+              body="Try another status chip or create an inbound shipment to populate the receiving queue."
+            />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[820px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Carrier</th>
                     <th className="px-4 py-3 font-semibold">Client</th>
@@ -243,7 +293,7 @@ export function IncomingShipmentsClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {shipments.map((shipment) => (
+                  {filteredShipments.map((shipment) => (
                     <tr
                       key={shipment.id}
                       className="cursor-pointer hover:bg-slate-50"

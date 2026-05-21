@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import type { Json, Tables } from "@/app/types/database.types";
-import { EmptyState, Panel, StatusBadge } from "@/app/components/wms-ui";
+import { EmptyState, LoadingState, Panel, StatusBadge } from "@/app/components/wms-ui";
 
 type ActivityLog = Tables<"activity_logs">;
 
@@ -23,6 +23,7 @@ export function ActivityTimeline({
   const loadTimeline = useCallback(async () => {
     if (!entityId) {
       setItems([]);
+      setLoading(false);
       return;
     }
 
@@ -61,7 +62,7 @@ export function ActivityTimeline({
       {!entityId ? (
         <EmptyState title="No record selected" body="Choose a record from the table to inspect its timeline." />
       ) : loading && items.length === 0 ? (
-        <p className="text-sm text-slate-500">Loading activity...</p>
+        <LoadingState label="Loading activity..." />
       ) : error ? (
         <p className="text-sm font-medium text-rose-700">{error}</p>
       ) : items.length === 0 ? (

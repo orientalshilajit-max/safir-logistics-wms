@@ -85,9 +85,9 @@ export function DashboardPage({ route }: { route: DashboardRoute }) {
               No logic wired
             </span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <div className="max-h-[34rem] overflow-auto">
+            <table className="w-full min-w-[640px] text-left text-sm tabular-nums">
+              <thead className="sticky top-0 z-10 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                 <tr>
                   <th className="px-5 py-3 font-semibold">Reference</th>
                   <th className="px-5 py-3 font-semibold">Area</th>

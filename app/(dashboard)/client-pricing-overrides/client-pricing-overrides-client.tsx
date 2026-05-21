@@ -10,6 +10,7 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
   StatusBadge,
@@ -136,13 +137,29 @@ export function ClientPricingOverridesClient() {
 
   async function saveOverride(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
+    const overridePrice = Number(form.override_price);
+
+    if (!form.client_id || !form.service_id) {
+      setError("Client and service are required.");
+      return;
+    }
+
+    if (!Number.isFinite(overridePrice) || overridePrice < 0) {
+      setError("Override price must be zero or greater.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
     const payload = {
       client_id: form.client_id,
       service_id: form.service_id,
-      override_price: Number(form.override_price) || 0,
+      override_price: overridePrice,
       active: form.active,
       notes: form.notes.trim() || null,
     };
@@ -162,6 +179,14 @@ export function ClientPricingOverridesClient() {
   }
 
   async function deactivateOverride(override: Override) {
+    if (
+      !window.confirm(
+        `Deactivate override for ${override.clients?.company_name ?? "this client"}?`,
+      )
+    ) {
+      return;
+    }
+
     setError(null);
     const { error: updateError } = await supabase
       .from("client_pricing_overrides")
@@ -218,13 +243,13 @@ export function ClientPricingOverridesClient() {
           </div>
 
           {loading ? (
-            <p className="text-sm text-slate-500">Loading pricing overrides...</p>
+            <LoadingState label="Loading pricing overrides..." />
           ) : filteredRows.length === 0 ? (
             <EmptyState title="No overrides found" body="Create a client-specific price or adjust the filters." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[960px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[960px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Client</th>
                     <th className="px-4 py-3 font-semibold">Service</th>

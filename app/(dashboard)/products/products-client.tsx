@@ -9,6 +9,7 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
   StatusBadge,
@@ -25,6 +26,8 @@ type ProductForm = {
   sku: string;
   fnsku: string;
   asin: string;
+  barcode: string;
+  barcode_type: string;
   photo_url: string;
   notes: string;
   active: boolean;
@@ -36,6 +39,8 @@ const emptyForm: ProductForm = {
   sku: "",
   fnsku: "",
   asin: "",
+  barcode: "",
+  barcode_type: "",
   photo_url: "",
   notes: "",
   active: true,
@@ -94,6 +99,8 @@ export function ProductsClient() {
       sku: product.sku ?? "",
       fnsku: product.fnsku ?? "",
       asin: product.asin ?? "",
+      barcode: product.barcode ?? "",
+      barcode_type: product.barcode_type ?? "",
       photo_url: product.photo_url ?? "",
       notes: product.notes ?? "",
       active: product.active,
@@ -107,6 +114,15 @@ export function ProductsClient() {
 
   async function saveProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
+    if (!form.client_id || !form.product_name.trim()) {
+      setError("Client and product name are required.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -116,6 +132,8 @@ export function ProductsClient() {
       sku: form.sku.trim() || null,
       fnsku: form.fnsku.trim() || null,
       asin: form.asin.trim() || null,
+      barcode: form.barcode.trim() || null,
+      barcode_type: form.barcode_type.trim() || null,
       photo_url: form.photo_url.trim() || null,
       notes: form.notes.trim() || null,
       active: form.active,
@@ -136,6 +154,10 @@ export function ProductsClient() {
   }
 
   async function deleteProduct(product: Product) {
+    if (!window.confirm(`Delete ${product.product_name}?`)) {
+      return;
+    }
+
     setError(null);
     const { error: deleteError } = await supabase
       .from("products")
@@ -162,19 +184,20 @@ export function ProductsClient() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <Panel title="Product catalog" description="Linked to client accounts in Supabase.">
           {loading ? (
-            <p className="text-sm text-slate-500">Loading products...</p>
+            <LoadingState label="Loading products..." />
           ) : products.length === 0 ? (
             <EmptyState title="No products yet" body="Create product records so incoming shipments can reference them." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Product</th>
                     <th className="px-4 py-3 font-semibold">Client</th>
                     <th className="px-4 py-3 font-semibold">SKU</th>
                     <th className="px-4 py-3 font-semibold">FNSKU</th>
                     <th className="px-4 py-3 font-semibold">ASIN</th>
+                    <th className="px-4 py-3 font-semibold">Barcode</th>
                     <th className="px-4 py-3 font-semibold">State</th>
                     <th className="px-4 py-3 font-semibold">Actions</th>
                   </tr>
@@ -187,6 +210,7 @@ export function ProductsClient() {
                       <td className="px-4 py-3 text-slate-600">{product.sku ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{product.fnsku ?? "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{product.asin ?? "-"}</td>
+                      <td className="px-4 py-3 text-slate-600">{product.barcode ?? "-"}</td>
                       <td className="px-4 py-3">
                         <StatusBadge tone={product.active ? "emerald" : "slate"}>
                           {product.active ? "Active" : "Inactive"}
@@ -244,6 +268,23 @@ export function ProductsClient() {
               </Field>
               <Field label="ASIN">
                 <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <Field label="Barcode">
+                <input
+                  className={inputClassName}
+                  value={form.barcode}
+                  onChange={(event) => setForm({ ...form, barcode: event.target.value })}
+                />
+              </Field>
+              <Field label="Barcode type">
+                <input
+                  className={inputClassName}
+                  placeholder="Code 128, UPC, QR"
+                  value={form.barcode_type}
+                  onChange={(event) => setForm({ ...form, barcode_type: event.target.value })}
+                />
               </Field>
             </div>
             <Field label="Photo URL">

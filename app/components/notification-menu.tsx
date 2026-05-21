@@ -15,6 +15,8 @@ export function NotificationMenu() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationWithRead[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [markingId, setMarkingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const unreadCount = useMemo(
@@ -24,6 +26,7 @@ export function NotificationMenu() {
 
   const loadNotifications = useCallback(async () => {
     if (!user) {
+      setLoading(false);
       return;
     }
 
@@ -42,11 +45,13 @@ export function NotificationMenu() {
 
     if (notificationsResult.error) {
       setError(notificationsResult.error.message);
+      setLoading(false);
       return;
     }
 
     if (readsResult.error) {
       setError(readsResult.error.message);
+      setLoading(false);
       return;
     }
 
@@ -64,6 +69,7 @@ export function NotificationMenu() {
       })),
     );
     setError(null);
+    setLoading(false);
   }, [user]);
 
   useEffect(() => {
@@ -81,7 +87,18 @@ export function NotificationMenu() {
       return;
     }
 
+    if (markingId === notificationId) {
+      return;
+    }
+
     const now = new Date().toISOString();
+    const previous = notifications;
+    setMarkingId(notificationId);
+    setNotifications((current) =>
+      current.map((item) =>
+        item.id === notificationId ? { ...item, read_at: now } : item,
+      ),
+    );
     const { error: readError } = await supabase.from("user_notifications").upsert(
       {
         notification_id: notificationId,
@@ -92,15 +109,13 @@ export function NotificationMenu() {
     );
 
     if (readError) {
+      setNotifications(previous);
       setError(readError.message);
+      setMarkingId(null);
       return;
     }
 
-    setNotifications((current) =>
-      current.map((item) =>
-        item.id === notificationId ? { ...item, read_at: now } : item,
-      ),
-    );
+    setMarkingId(null);
   }
 
   async function markAllAsRead() {
@@ -139,7 +154,11 @@ export function NotificationMenu() {
               Mark all read
             </button>
           </div>
-          {error ? (
+          {loading ? (
+            <div className="px-4 py-6 text-sm font-medium text-slate-500">
+              Loading notifications...
+            </div>
+          ) : error ? (
             <p className="px-4 py-3 text-sm font-medium text-rose-700">{error}</p>
           ) : notifications.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-slate-500">

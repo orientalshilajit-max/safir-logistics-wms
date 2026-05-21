@@ -10,8 +10,10 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
+  QuickFilterButton,
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
@@ -51,6 +53,8 @@ type RequestBox = {
   box_number: string;
   tracking_number: string;
   uploaded_label_url: string;
+  box_barcode: string;
+  box_barcode_type: string;
   items: Record<string, string>;
 };
 
@@ -117,6 +121,7 @@ export function RequestsClient() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
@@ -237,6 +242,8 @@ export function RequestsClient() {
           box_number: String(current.boxes.length + 1),
           tracking_number: "",
           uploaded_label_url: "",
+          box_barcode: "",
+          box_barcode_type: "",
           items: {},
         },
       ],
@@ -245,6 +252,10 @@ export function RequestsClient() {
 
   async function createAndSubmitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -342,6 +353,8 @@ export function RequestsClient() {
           box_number: Number(box.box_number) || 1,
           tracking_number: box.tracking_number.trim() || null,
           uploaded_label_url: box.uploaded_label_url.trim() || null,
+          box_barcode: box.box_barcode.trim() || null,
+          box_barcode_type: box.box_barcode_type.trim() || null,
         })
         .select("id")
         .single();
@@ -407,7 +420,23 @@ export function RequestsClient() {
     request: ServiceRequest,
     status: ServiceRequest["status"],
   ) {
+    if (updatingStatusId) {
+      return;
+    }
+
+    if (
+      (status === "Rejected" || status === "Completed") &&
+      !window.confirm(`Move ${request.request_number} to ${status}?`)
+    ) {
+      return;
+    }
+
     setError(null);
+    setUpdatingStatusId(request.id);
+    const previousRequests = requests;
+    setRequests((current) =>
+      current.map((item) => (item.id === request.id ? { ...item, status } : item)),
+    );
     const now = new Date().toISOString();
     const { error: updateError } = await supabase
       .from("service_requests")
@@ -419,10 +448,12 @@ export function RequestsClient() {
       .eq("id", request.id);
 
     if (updateError) {
+      setRequests(previousRequests);
       setError(updateError.message);
     } else {
       await loadData();
     }
+    setUpdatingStatusId(null);
   }
 
   return (
@@ -437,6 +468,19 @@ export function RequestsClient() {
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
         <Panel title="Requests" description="Submitted requests require admin approval before work starts.">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {(["all", "Pending Approval", "Approved", "Need Client Action", "Completed"] as const).map(
+              (status) => (
+                <QuickFilterButton
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                >
+                  {status === "all" ? "All" : status}
+                </QuickFilterButton>
+              ),
+            )}
+          </div>
           <div className="mb-4 grid gap-3 md:grid-cols-2">
             <input
               className={inputClassName}
@@ -458,13 +502,13 @@ export function RequestsClient() {
             </select>
           </div>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading service requests...</p>
+            <LoadingState label="Loading service requests..." />
           ) : filteredRequests.length === 0 ? (
             <EmptyState title="No service requests found" body="Create a request from available inventory to begin." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[900px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Request</th>
                     <th className="px-4 py-3 font-semibold">Client</th>
@@ -501,7 +545,7 @@ export function RequestsClient() {
                           <Button
                             type="button"
                             variant="secondary"
-                            disabled={!isAdmin}
+                            disabled={!isAdmin || updatingStatusId === request.id}
                             onClick={() => void updateRequestStatus(request, "Approved")}
                           >
                             Approve
@@ -509,7 +553,7 @@ export function RequestsClient() {
                           <Button
                             type="button"
                             variant="danger"
-                            disabled={!isAdmin}
+                            disabled={!isAdmin || updatingStatusId === request.id}
                             onClick={() => void updateRequestStatus(request, "Rejected")}
                           >
                             Reject
@@ -517,14 +561,14 @@ export function RequestsClient() {
                           <Button
                             type="button"
                             variant="secondary"
-                            disabled={!isAdmin}
+                            disabled={!isAdmin || updatingStatusId === request.id}
                             onClick={() => void updateRequestStatus(request, "Need Client Action")}
                           >
                             Request changes
                           </Button>
                           <Button
                             type="button"
-                            disabled={!isAdmin}
+                            disabled={!isAdmin || updatingStatusId === request.id}
                             onClick={() => void updateRequestStatus(request, "Completed")}
                           >
                             Complete
@@ -713,6 +757,12 @@ export function RequestsClient() {
                     <Field label="Uploaded label URL">
                       <input className={inputClassName} value={box.uploaded_label_url} onChange={(event) => updateBox(box.localId, { uploaded_label_url: event.target.value })} />
                     </Field>
+                    <Field label="Box barcode">
+                      <input className={inputClassName} value={box.box_barcode} onChange={(event) => updateBox(box.localId, { box_barcode: event.target.value })} />
+                    </Field>
+                    <Field label="Barcode type">
+                      <input className={inputClassName} placeholder="Code 128, QR" value={box.box_barcode_type} onChange={(event) => updateBox(box.localId, { box_barcode_type: event.target.value })} />
+                    </Field>
                   </div>
                   <div className="grid gap-2">
                     {form.lines.map((line) => {
@@ -890,18 +940,44 @@ function validateRequest(
 
   for (const line of lines) {
     const inventoryRow = inventory.find((row) => row.id === line.inventory_id);
-    const quantity = Number(line.requested_quantity) || 0;
+    const quantity = Number(line.requested_quantity);
 
     if (!inventoryRow || inventoryRow.client_id !== clientId) {
       return "Selected inventory does not belong to the request client.";
     }
 
-    if (quantity <= 0) {
-      return "Requested quantity must be greater than 0.";
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return "Requested quantity must be a whole number greater than 0.";
     }
 
     if (quantity > inventoryRow.available_qty) {
       return `Requested quantity for ${inventoryRow.products?.product_name ?? "a product"} exceeds available inventory.`;
+    }
+
+    if (line.service_ids.length === 0) {
+      return `Select at least one service for ${inventoryRow.products?.product_name ?? "each product"}.`;
+    }
+  }
+
+  for (const box of form.boxes) {
+    const boxNumber = Number(box.box_number);
+
+    if (!Number.isInteger(boxNumber) || boxNumber <= 0) {
+      return "Box numbers must be whole numbers greater than 0.";
+    }
+
+    for (const [lineId, quantityValue] of Object.entries(box.items)) {
+      if (!quantityValue) continue;
+      const quantity = Number(quantityValue);
+
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        return "Box product quantities must be whole numbers zero or greater.";
+      }
+
+      const line = form.lines.find((item) => item.localId === lineId);
+      if (line && quantity > Number(line.requested_quantity)) {
+        return "A box quantity cannot exceed the requested product quantity.";
+      }
     }
   }
 

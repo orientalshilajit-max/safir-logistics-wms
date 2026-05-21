@@ -611,6 +611,8 @@ export type Database = {
         Row: {
           active: boolean;
           asin: string | null;
+          barcode: string | null;
+          barcode_type: string | null;
           client_id: string;
           created_at: string;
           deleted_at: string | null;
@@ -625,6 +627,8 @@ export type Database = {
         Insert: {
           active?: boolean;
           asin?: string | null;
+          barcode?: string | null;
+          barcode_type?: string | null;
           client_id: string;
           created_at?: string;
           deleted_at?: string | null;
@@ -639,6 +643,8 @@ export type Database = {
         Update: {
           active?: boolean;
           asin?: string | null;
+          barcode?: string | null;
+          barcode_type?: string | null;
           client_id?: string;
           created_at?: string;
           deleted_at?: string | null;
@@ -717,6 +723,8 @@ export type Database = {
       };
       request_boxes: {
         Row: {
+          box_barcode: string | null;
+          box_barcode_type: string | null;
           box_number: number;
           created_at: string;
           deleted_at: string | null;
@@ -727,6 +735,8 @@ export type Database = {
           uploaded_label_url: string | null;
         };
         Insert: {
+          box_barcode?: string | null;
+          box_barcode_type?: string | null;
           box_number: number;
           created_at?: string;
           deleted_at?: string | null;
@@ -737,6 +747,8 @@ export type Database = {
           uploaded_label_url?: string | null;
         };
         Update: {
+          box_barcode?: string | null;
+          box_barcode_type?: string | null;
           box_number?: number;
           created_at?: string;
           deleted_at?: string | null;
@@ -1121,6 +1133,147 @@ export type Database = {
           },
         ];
       };
+      warehouse_tasks: {
+        Row: {
+          assigned_to: string | null;
+          barcode: string | null;
+          client_id: string;
+          completed_at: string | null;
+          created_at: string;
+          deleted_at: string | null;
+          due_date: string | null;
+          id: string;
+          internal_notes: string | null;
+          priority: "Low" | "Normal" | "High" | "Urgent";
+          product_id: string | null;
+          quantity: number;
+          request_box_id: string | null;
+          request_item_id: string | null;
+          service_request_id: string | null;
+          status:
+            | "Pending"
+            | "Picking"
+            | "Packing"
+            | "QC"
+            | "Ready to Ship"
+            | "Completed"
+            | "On Hold"
+            | "Cancelled";
+          task_type:
+            | "picking"
+            | "packing"
+            | "qc"
+            | "ready_to_ship"
+            | "inventory_adjustment"
+            | "general";
+          updated_at: string;
+        };
+        Insert: {
+          assigned_to?: string | null;
+          barcode?: string | null;
+          client_id: string;
+          completed_at?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          due_date?: string | null;
+          id?: string;
+          internal_notes?: string | null;
+          priority?: "Low" | "Normal" | "High" | "Urgent";
+          product_id?: string | null;
+          quantity?: number;
+          request_box_id?: string | null;
+          request_item_id?: string | null;
+          service_request_id?: string | null;
+          status?:
+            | "Pending"
+            | "Picking"
+            | "Packing"
+            | "QC"
+            | "Ready to Ship"
+            | "Completed"
+            | "On Hold"
+            | "Cancelled";
+          task_type?:
+            | "picking"
+            | "packing"
+            | "qc"
+            | "ready_to_ship"
+            | "inventory_adjustment"
+            | "general";
+          updated_at?: string;
+        };
+        Update: {
+          assigned_to?: string | null;
+          barcode?: string | null;
+          client_id?: string;
+          completed_at?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          due_date?: string | null;
+          id?: string;
+          internal_notes?: string | null;
+          priority?: "Low" | "Normal" | "High" | "Urgent";
+          product_id?: string | null;
+          quantity?: number;
+          request_box_id?: string | null;
+          request_item_id?: string | null;
+          service_request_id?: string | null;
+          status?:
+            | "Pending"
+            | "Picking"
+            | "Packing"
+            | "QC"
+            | "Ready to Ship"
+            | "Completed"
+            | "On Hold"
+            | "Cancelled";
+          task_type?:
+            | "picking"
+            | "packing"
+            | "qc"
+            | "ready_to_ship"
+            | "inventory_adjustment"
+            | "general";
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "warehouse_tasks_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "warehouse_tasks_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "warehouse_tasks_request_box_id_fkey";
+            columns: ["request_box_id"];
+            isOneToOne: false;
+            referencedRelation: "request_boxes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "warehouse_tasks_request_item_id_fkey";
+            columns: ["request_item_id"];
+            isOneToOne: false;
+            referencedRelation: "request_items";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "warehouse_tasks_service_request_id_fkey";
+            columns: ["service_request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -1131,6 +1284,38 @@ export type Database = {
       is_wms_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      is_warehouse_operator: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      adjust_inventory_quantities: {
+        Args: {
+          p_inventory_id: string;
+          p_available_delta?: number;
+          p_reserved_delta?: number;
+          p_processing_delta?: number;
+          p_shipped_delta?: number;
+          p_damaged_delta?: number;
+        };
+        Returns: undefined;
+      };
+      post_incoming_item_to_inventory: {
+        Args: {
+          p_incoming_item_id: string;
+          p_received_quantity: number;
+          p_damaged_quantity?: number;
+          p_missing_quantity?: number;
+        };
+        Returns: undefined;
+      };
+      reserve_inventory_for_request_item: {
+        Args: { p_request_item_id: string };
+        Returns: undefined;
+      };
+      release_inventory_for_request_item: {
+        Args: { p_request_item_id: string };
+        Returns: undefined;
       };
       mark_overdue_invoices: {
         Args: Record<PropertyKey, never>;

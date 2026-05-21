@@ -50,7 +50,7 @@ export function Button({
     <button
       {...props}
       className={[
-        "inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-semibold transition disabled:cursor-not-allowed",
+        "inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed",
         styles[variant],
         props.className ?? "",
       ].join(" ")}
@@ -81,6 +81,15 @@ export const inputClassName =
 export const textAreaClassName =
   "min-h-24 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100";
 
+export const tableClassName =
+  "w-full text-left text-sm tabular-nums";
+
+export const tableHeadClassName =
+  "sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur";
+
+export const tableCellClassName =
+  "px-4 py-3 align-middle";
+
 export function StatusBadge({
   children,
   tone = "slate",
@@ -101,7 +110,7 @@ export function StatusBadge({
 
   return (
     <span
-      className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${styles[tone]}`}
+      className={`inline-flex w-fit shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold leading-none ${styles[tone]}`}
     >
       {children}
     </span>
@@ -120,12 +129,63 @@ export function ErrorBanner({ message }: { message: string | null }) {
   );
 }
 
-export function EmptyState({ title, body }: { title: string; body: string }) {
+export function LoadingState({ label = "Loading..." }: { label?: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
+    <div className="rounded-lg border border-slate-200 bg-white p-5">
+      <div className="flex items-center gap-3">
+        <span className="size-4 animate-spin rounded-full border-2 border-slate-200 border-t-slate-950" />
+        <p className="text-sm font-medium text-slate-600">{label}</p>
+      </div>
+      <div className="mt-5 grid gap-3">
+        <span className="h-3 w-3/4 animate-pulse rounded-full bg-slate-100" />
+        <span className="h-3 w-full animate-pulse rounded-full bg-slate-100" />
+        <span className="h-3 w-2/3 animate-pulse rounded-full bg-slate-100" />
+      </div>
+    </div>
+  );
+}
+
+export function EmptyState({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center sm:p-8">
+      <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-500">
+        -
+      </div>
       <p className="text-sm font-semibold text-slate-950">{title}</p>
       <p className="mt-2 text-sm text-slate-500">{body}</p>
+      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
+  );
+}
+
+export function QuickFilterButton({
+  active,
+  children,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  active?: boolean;
+}) {
+  return (
+    <button
+      {...props}
+      className={[
+        "min-h-9 rounded-full border px-3 text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-slate-100",
+        active
+          ? "border-slate-950 bg-slate-950 text-white"
+          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950",
+        props.className ?? "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
   );
 }
 

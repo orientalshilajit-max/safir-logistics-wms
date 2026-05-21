@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { dashboardRoutes } from "@/app/lib/dashboard";
 import { LogoutButton } from "@/app/components/logout-button";
 import { NotificationMenu } from "@/app/components/notification-menu";
+import { useAuth } from "@/app/auth/auth-provider";
+import type { UserRole } from "@/app/lib/auth";
 
 const statusStyles = {
   Live: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -14,12 +16,14 @@ const statusStyles = {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { role } = useAuth();
+  const visibleRoutes = getVisibleRoutes(role);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="flex min-h-screen">
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:block">
-          <SidebarContent pathname={pathname} />
+          <SidebarContent pathname={pathname} routes={visibleRoutes} />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -45,7 +49,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <nav className="flex gap-2 overflow-x-auto border-t border-slate-100 px-4 py-3 lg:hidden">
-              {dashboardRoutes.map((item) => (
+              {visibleRoutes.map((item) => (
                 <MobileNavLink
                   key={item.href}
                   href={item.href}
@@ -65,7 +69,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SidebarContent({ pathname }: { pathname: string }) {
+function SidebarContent({
+  pathname,
+  routes,
+}: {
+  pathname: string;
+  routes: typeof dashboardRoutes;
+}) {
   return (
     <div className="flex h-screen flex-col">
       <div className="border-b border-slate-200 px-6 py-5">
@@ -81,7 +91,7 @@ function SidebarContent({ pathname }: { pathname: string }) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
-        {dashboardRoutes.map((item) => {
+        {routes.map((item) => {
           const active = pathname === item.href;
 
           return (
@@ -121,6 +131,20 @@ function SidebarContent({ pathname }: { pathname: string }) {
       </div>
     </div>
   );
+}
+
+function getVisibleRoutes(role: UserRole) {
+  if (role !== "warehouse_operator") {
+    return dashboardRoutes;
+  }
+
+  const restrictedRoutes = new Set([
+    "/invoices",
+    "/client-pricing-overrides",
+    "/settings",
+  ]);
+
+  return dashboardRoutes.filter((route) => !restrictedRoutes.has(route.href));
 }
 
 function MobileNavLink({

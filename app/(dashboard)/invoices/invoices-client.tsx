@@ -10,8 +10,10 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
+  QuickFilterButton,
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
@@ -80,6 +82,7 @@ export function InvoicesClient() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [actionSaving, setActionSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
@@ -101,7 +104,10 @@ export function InvoicesClient() {
 
   const loadInvoices = useCallback(async () => {
     setError(null);
-    await supabase.rpc("mark_overdue_invoices");
+    const { error: overdueError } = await supabase.rpc("mark_overdue_invoices");
+    if (overdueError) {
+      setError(overdueError.message);
+    }
     const { data, error: loadError } = await supabase
       .from("invoices")
       .select(
@@ -128,7 +134,23 @@ export function InvoicesClient() {
   }, [loadInvoices]);
 
   async function updateInvoiceStatus(invoice: Invoice, status: InvoiceStatus) {
+    if (actionSaving) {
+      return;
+    }
+
+    if (
+      (status === "Cancelled" || status === "Paid") &&
+      !window.confirm(`Mark ${invoice.invoice_number} as ${status}?`)
+    ) {
+      return;
+    }
+
     setError(null);
+    setActionSaving(`status-${invoice.id}`);
+    const previousInvoices = invoices;
+    setInvoices((current) =>
+      current.map((item) => (item.id === invoice.id ? { ...item, status } : item)),
+    );
     const paidAmount =
       status === "Paid" ? invoice.total_amount : status === "Partial Paid" ? invoice.paid_amount : invoice.paid_amount;
     const { error: updateError } = await supabase
@@ -137,19 +159,36 @@ export function InvoicesClient() {
       .eq("id", invoice.id);
 
     if (updateError) {
+      setInvoices(previousInvoices);
       setError(updateError.message);
     } else {
       await supabase.rpc("recalculate_invoice_totals", { p_invoice_id: invoice.id });
       await loadInvoices();
     }
+    setActionSaving(null);
   }
 
   async function applyPayment(invoice: Invoice, mode: "paid" | "partial") {
+    if (actionSaving) {
+      return;
+    }
+
     setError(null);
     const amount =
       mode === "paid"
         ? invoice.total_amount
         : Math.min(Number(paymentAmount) || 0, invoice.total_amount);
+
+    if (mode === "partial" && (!Number.isFinite(amount) || amount <= 0)) {
+      setError("Enter a partial payment amount greater than 0.");
+      return;
+    }
+
+    if (!window.confirm(`Record ${formatMoney(amount)} payment for ${invoice.invoice_number}?`)) {
+      return;
+    }
+
+    setActionSaving(`payment-${invoice.id}`);
 
     const { error: updateError } = await supabase
       .from("invoices")
@@ -166,10 +205,26 @@ export function InvoicesClient() {
       setPaymentAmount("");
       await loadInvoices();
     }
+    setActionSaving(null);
   }
 
   async function saveInvoiceItem(item: InvoiceItem) {
+    if (actionSaving) {
+      return;
+    }
+
+    if (!item.description.trim()) {
+      setError("Invoice line description is required.");
+      return;
+    }
+
+    if (item.quantity < 0 || item.unit_price < 0) {
+      setError("Invoice line quantity and unit price must be zero or greater.");
+      return;
+    }
+
     setError(null);
+    setActionSaving(`line-${item.id}`);
     const { error: updateError } = await supabase
       .from("invoice_items")
       .update({
@@ -185,12 +240,21 @@ export function InvoicesClient() {
     } else {
       await loadInvoices();
     }
+    setActionSaving(null);
   }
 
   async function addLineItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!selectedInvoice) {
+    if (!selectedInvoice || saving) {
+      return;
+    }
+
+    const quantity = Number(lineForm.quantity);
+    const unitPrice = Number(lineForm.unit_price);
+
+    if (!Number.isFinite(quantity) || quantity < 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+      setError("Line quantity and unit price must be zero or greater.");
       return;
     }
 
@@ -202,8 +266,8 @@ export function InvoicesClient() {
       service_request_id: selectedInvoice.service_request_id,
       item_type: lineForm.item_type,
       description: lineForm.description.trim() || customLabels[lineForm.item_type],
-      quantity: Number(lineForm.quantity) || 1,
-      unit_price: Number(lineForm.unit_price) || 0,
+      quantity,
+      unit_price: unitPrice,
       sort_order: selectedInvoice.invoice_items.length + 1,
     });
 
@@ -244,6 +308,19 @@ export function InvoicesClient() {
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
         <Panel title="Invoice list" description="One invoice is generated when a service request is completed.">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {(["all", "Draft", "Unpaid", "Partial Paid", "Paid", "Overdue"] as const).map(
+              (status) => (
+                <QuickFilterButton
+                  key={status}
+                  active={statusFilter === status}
+                  onClick={() => setStatusFilter(status)}
+                >
+                  {status === "all" ? "All" : status}
+                </QuickFilterButton>
+              ),
+            )}
+          </div>
           <div className="mb-4 grid gap-3 md:grid-cols-2">
             <input
               className={inputClassName}
@@ -265,13 +342,13 @@ export function InvoicesClient() {
             </select>
           </div>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading invoices...</p>
+            <LoadingState label="Loading invoices..." />
           ) : filteredInvoices.length === 0 ? (
             <EmptyState title="No invoices found" body="Complete a service request to generate an invoice." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[860px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Invoice</th>
                     <th className="px-4 py-3 font-semibold">Client</th>
@@ -324,7 +401,7 @@ export function InvoicesClient() {
                     key={status}
                     type="button"
                     variant={status === "Cancelled" ? "danger" : "secondary"}
-                    disabled={!isAdmin || selectedInvoice.status === status}
+                    disabled={!isAdmin || selectedInvoice.status === status || actionSaving !== null}
                     onClick={() => void updateInvoiceStatus(selectedInvoice, status)}
                   >
                     {status}
@@ -342,10 +419,10 @@ export function InvoicesClient() {
                   value={paymentAmount}
                   onChange={(event) => setPaymentAmount(event.target.value)}
                 />
-                <Button type="button" variant="secondary" disabled={!isAdmin} onClick={() => void applyPayment(selectedInvoice, "partial")}>
+                <Button type="button" variant="secondary" disabled={!isAdmin || actionSaving !== null} onClick={() => void applyPayment(selectedInvoice, "partial")}>
                   Mark partial
                 </Button>
-                <Button type="button" disabled={!isAdmin} onClick={() => void applyPayment(selectedInvoice, "paid")}>
+                <Button type="button" disabled={!isAdmin || actionSaving !== null} onClick={() => void applyPayment(selectedInvoice, "paid")}>
                   Mark paid
                 </Button>
               </div>
@@ -360,7 +437,7 @@ export function InvoicesClient() {
                       <div className="grid gap-3 sm:grid-cols-[1fr_7rem_8rem_auto]">
                         <input
                           className={inputClassName}
-                          disabled={!isAdmin}
+                          disabled={!isAdmin || actionSaving === `line-${item.id}`}
                           value={item.description}
                           onChange={(event) =>
                             updateLocalItem(selectedInvoice.id, item.id, {

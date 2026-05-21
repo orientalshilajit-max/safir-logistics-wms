@@ -6,8 +6,10 @@ import type { Tables } from "@/app/types/database.types";
 import {
   EmptyState,
   ErrorBanner,
+  LoadingState,
   PageHeader,
   Panel,
+  QuickFilterButton,
   StatusBadge,
 } from "@/app/components/wms-ui";
 
@@ -20,6 +22,7 @@ type InventoryRow = Tables<"inventory"> & {
 
 export function InventoryClient() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
+  const [stockFilter, setStockFilter] = useState<"all" | "available" | "reserved" | "damaged">("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +38,16 @@ export function InventoryClient() {
         { expected: 0, received: 0, available: 0, damaged: 0 },
       ),
     [rows],
+  );
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) => {
+        if (stockFilter === "available") return row.available_qty > 0;
+        if (stockFilter === "reserved") return row.reserved_qty > 0;
+        if (stockFilter === "damaged") return row.damaged_qty > 0;
+        return true;
+      }),
+    [rows, stockFilter],
   );
 
   async function loadInventory() {
@@ -77,14 +90,31 @@ export function InventoryClient() {
       </section>
 
       <Panel title="Inventory balances" description="Grouped by client and product.">
+        <div className="mb-4 flex flex-wrap gap-2">
+          <QuickFilterButton active={stockFilter === "all"} onClick={() => setStockFilter("all")}>
+            All
+          </QuickFilterButton>
+          <QuickFilterButton active={stockFilter === "available"} onClick={() => setStockFilter("available")}>
+            Available
+          </QuickFilterButton>
+          <QuickFilterButton active={stockFilter === "reserved"} onClick={() => setStockFilter("reserved")}>
+            Reserved
+          </QuickFilterButton>
+          <QuickFilterButton active={stockFilter === "damaged"} onClick={() => setStockFilter("damaged")}>
+            Damaged
+          </QuickFilterButton>
+        </div>
         {loading ? (
-          <p className="text-sm text-slate-500">Loading inventory...</p>
-        ) : rows.length === 0 ? (
-          <EmptyState title="No inventory yet" body="Complete receiving for incoming items to create inventory records." />
+          <LoadingState label="Loading inventory..." />
+        ) : filteredRows.length === 0 ? (
+          <EmptyState
+            title="No inventory rows match this view"
+            body="Try another quick filter or complete receiving to create inventory records."
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <div className="max-h-[34rem] overflow-auto">
+            <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
+              <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Product</th>
                   <th className="px-4 py-3 font-semibold">Client</th>
@@ -99,7 +129,7 @@ export function InventoryClient() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map((row) => (
+                {filteredRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-950">
                       {row.products?.product_name ?? "Unknown product"}

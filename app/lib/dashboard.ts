@@ -57,6 +57,14 @@ export const dashboardRoutes: DashboardRoute[] = [
     status: "Draft",
   },
   {
+    href: "/warehouse-tasks",
+    label: "Warehouse Tasks",
+    eyebrow: "Operations",
+    title: "Warehouse Task Queue",
+    description: "Run picking, packing, QC, and ready-to-ship workflows from one fast queue.",
+    status: "Setup",
+  },
+  {
     href: "/outbound-shipments",
     label: "Outbound Shipments",
     eyebrow: "Outbound",

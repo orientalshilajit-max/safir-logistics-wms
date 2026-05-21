@@ -9,6 +9,7 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
   StatusBadge,
@@ -91,6 +92,15 @@ export function ClientsClient() {
 
   async function saveClient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
+    if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
+      setError("Company, contact, and email are required.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -119,6 +129,10 @@ export function ClientsClient() {
   }
 
   async function deleteClient(client: Client) {
+    if (!window.confirm(`Delete ${client.company_name}?`)) {
+      return;
+    }
+
     setError(null);
     const { error: deleteError } = await supabase
       .from("clients")
@@ -145,13 +159,13 @@ export function ClientsClient() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <Panel title="Client records" description="Real records from Supabase.">
           {loading ? (
-            <p className="text-sm text-slate-500">Loading clients...</p>
+            <LoadingState label="Loading clients..." />
           ) : clients.length === 0 ? (
             <EmptyState title="No clients yet" body="Create the first client account to start connecting products and shipments." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[760px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Company</th>
                     <th className="px-4 py-3 font-semibold">Contact</th>

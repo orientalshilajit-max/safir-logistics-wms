@@ -2,15 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
-import type { Tables, TablesInsert } from "@/app/types/database.types";
+import type { Tables } from "@/app/types/database.types";
 import {
   Button,
   EmptyState,
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
+  QuickFilterButton,
   StatusBadge,
 } from "@/app/components/wms-ui";
 
@@ -35,6 +37,7 @@ export function ReceivingQueueClient() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, QuantityDraft>>({});
   const [receivedStatusId, setReceivedStatusId] = useState<string | null>(null);
+  const [queueFilter, setQueueFilter] = useState<"open" | "discrepancy" | "posted" | "all">("open");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +45,24 @@ export function ReceivingQueueClient() {
   const openItems = useMemo(
     () => items.filter((item) => !item.inventory_posted_at).length,
     [items],
+  );
+  const filteredItems = useMemo(
+    () =>
+      items.filter((item) => {
+        const draft = drafts[item.id];
+        const received = Number(draft?.received_quantity ?? item.received_quantity);
+        const damaged = Number(draft?.damaged_quantity ?? item.damaged_quantity);
+        const missing = Number(draft?.missing_quantity ?? item.missing_quantity);
+        const discrepancy =
+          item.expected_quantity !== received || damaged > 0 || missing > 0;
+        const posted = Boolean(item.inventory_posted_at);
+
+        if (queueFilter === "open") return !posted;
+        if (queueFilter === "posted") return posted;
+        if (queueFilter === "discrepancy") return discrepancy;
+        return true;
+      }),
+    [drafts, items, queueFilter],
   );
 
   useEffect(() => {
@@ -106,7 +127,42 @@ export function ReceivingQueueClient() {
     }));
   }
 
+  function validateDraft(item: QueueItem) {
+    const draft = drafts[item.id];
+
+    if (!draft) {
+      return "Receiving quantities are still loading. Try again in a moment.";
+    }
+
+    const quantities = [
+      Number(draft.received_quantity),
+      Number(draft.damaged_quantity),
+      Number(draft.missing_quantity),
+    ];
+
+    if (quantities.some((quantity) => !Number.isFinite(quantity) || quantity < 0)) {
+      return "Receiving, damaged, and missing quantities must be zero or greater.";
+    }
+
+    if (quantities.some((quantity) => !Number.isInteger(quantity))) {
+      return "Receiving quantities must be whole numbers.";
+    }
+
+    return null;
+  }
+
   async function saveQuantities(item: QueueItem) {
+    if (savingId) {
+      return;
+    }
+
+    const validationError = validateDraft(item);
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     const draft = drafts[item.id];
     setSavingId(item.id);
     setError(null);
@@ -130,6 +186,17 @@ export function ReceivingQueueClient() {
   }
 
   async function completeReceiving(item: QueueItem) {
+    if (savingId) {
+      return;
+    }
+
+    const validationError = validateDraft(item);
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     const draft = drafts[item.id];
     const shipment = item.incoming_shipments;
 
@@ -146,58 +213,27 @@ export function ReceivingQueueClient() {
     const received = Number(draft.received_quantity) || 0;
     const damaged = Number(draft.damaged_quantity) || 0;
     const missing = Number(draft.missing_quantity) || 0;
-    const available = Math.max(received - damaged, 0);
-    const now = new Date().toISOString();
+    const hasDiscrepancy =
+      item.expected_quantity !== received || damaged > 0 || missing > 0;
+
+    if (
+      hasDiscrepancy &&
+      !window.confirm(
+        "This receiving item has a discrepancy. Post it to inventory anyway?",
+      )
+    ) {
+      return;
+    }
 
     setSavingId(item.id);
     setError(null);
 
-    const { error: itemUpdateError } = await supabase
-      .from("incoming_items")
-      .update({
-        received_quantity: received,
-        damaged_quantity: damaged,
-        missing_quantity: missing,
-        inventory_posted_at: now,
-      })
-      .eq("id", item.id)
-      .is("inventory_posted_at", null);
-
-    if (itemUpdateError) {
-      setError(itemUpdateError.message);
-      setSavingId(null);
-      return;
-    }
-
-    const { data: existingInventory, error: inventoryLoadError } = await supabase
-      .from("inventory")
-      .select("*")
-      .eq("client_id", shipment.client_id)
-      .eq("product_id", item.product_id)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    if (inventoryLoadError) {
-      setError(inventoryLoadError.message);
-      setSavingId(null);
-      return;
-    }
-
-    const inventoryPayload: TablesInsert<"inventory"> = {
-      client_id: shipment.client_id,
-      product_id: item.product_id,
-      expected_qty: (existingInventory?.expected_qty ?? 0) + item.expected_quantity,
-      received_qty: (existingInventory?.received_qty ?? 0) + received,
-      available_qty: (existingInventory?.available_qty ?? 0) + available,
-      reserved_qty: existingInventory?.reserved_qty ?? 0,
-      processing_qty: existingInventory?.processing_qty ?? 0,
-      shipped_qty: existingInventory?.shipped_qty ?? 0,
-      damaged_qty: (existingInventory?.damaged_qty ?? 0) + damaged,
-    };
-
-    const { error: inventoryError } = existingInventory
-      ? await supabase.from("inventory").update(inventoryPayload).eq("id", existingInventory.id)
-      : await supabase.from("inventory").insert(inventoryPayload);
+    const { error: inventoryError } = await supabase.rpc("post_incoming_item_to_inventory", {
+      p_incoming_item_id: item.id,
+      p_received_quantity: received,
+      p_damaged_quantity: damaged,
+      p_missing_quantity: missing,
+    });
 
     if (inventoryError) {
       setError(inventoryError.message);
@@ -223,10 +259,14 @@ export function ReceivingQueueClient() {
       .is("inventory_posted_at", null);
 
     if ((remainingItems ?? []).length === 0) {
-      await supabase
+      const { error: shipmentError } = await supabase
         .from("incoming_shipments")
         .update({ status_id: receivedStatusId })
         .eq("id", shipmentId);
+
+      if (shipmentError) {
+        setError(shipmentError.message);
+      }
     }
   }
 
@@ -241,20 +281,40 @@ export function ReceivingQueueClient() {
       <ErrorBanner message={error} />
 
       <Panel title="Receiving items" description="Discrepancies are highlighted before inventory is updated.">
+        <div className="mb-4 flex flex-wrap gap-2">
+          <QuickFilterButton active={queueFilter === "open"} onClick={() => setQueueFilter("open")}>
+            Open
+          </QuickFilterButton>
+          <QuickFilterButton active={queueFilter === "discrepancy"} onClick={() => setQueueFilter("discrepancy")}>
+            Discrepancies
+          </QuickFilterButton>
+          <QuickFilterButton active={queueFilter === "posted"} onClick={() => setQueueFilter("posted")}>
+            Posted
+          </QuickFilterButton>
+          <QuickFilterButton active={queueFilter === "all"} onClick={() => setQueueFilter("all")}>
+            All
+          </QuickFilterButton>
+        </div>
         {loading ? (
-          <p className="text-sm text-slate-500">Loading receiving queue...</p>
-        ) : items.length === 0 ? (
-          <EmptyState title="No receiving items" body="Create incoming shipments with product lines to populate this queue." />
+          <LoadingState label="Loading receiving queue..." />
+        ) : filteredItems.length === 0 ? (
+          <EmptyState
+            title="No receiving items in this view"
+            body="Try a different quick filter or create an incoming shipment with product lines."
+          />
         ) : (
-          <div className="space-y-4">
-            {items.map((item) => {
+          <div className="space-y-3">
+            {filteredItems.map((item) => {
               const draft = drafts[item.id];
               const received = Number(draft?.received_quantity ?? 0);
-              const discrepancy = item.expected_quantity !== received;
+              const damaged = Number(draft?.damaged_quantity ?? 0);
+              const missing = Number(draft?.missing_quantity ?? 0);
+              const discrepancy =
+                item.expected_quantity !== received || damaged > 0 || missing > 0;
               const posted = Boolean(item.inventory_posted_at);
 
               return (
-                <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition focus-within:border-slate-300 hover:border-slate-300">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -326,6 +386,7 @@ export function ReceivingQueueClient() {
                     <Button
                       type="button"
                       variant="secondary"
+                      title="Save quantities"
                       disabled={posted || savingId === item.id}
                       onClick={() => void saveQuantities(item)}
                     >
@@ -333,6 +394,7 @@ export function ReceivingQueueClient() {
                     </Button>
                     <Button
                       type="button"
+                      title="Complete receiving"
                       disabled={posted || savingId === item.id}
                       onClick={() => void completeReceiving(item)}
                     >

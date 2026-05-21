@@ -10,6 +10,7 @@ import {
   ErrorBanner,
   Field,
   inputClassName,
+  LoadingState,
   PageHeader,
   Panel,
   StatusBadge,
@@ -132,6 +133,22 @@ export function ServicesClient() {
 
   async function saveService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
+    const defaultPrice = Number(form.default_price);
+
+    if (!form.name.trim() || !form.category.trim()) {
+      setError("Service name and category are required.");
+      return;
+    }
+
+    if (!Number.isFinite(defaultPrice) || defaultPrice < 0) {
+      setError("Default price must be zero or greater.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -140,7 +157,7 @@ export function ServicesClient() {
       category: form.category.trim(),
       description: form.description.trim() || null,
       pricing_type: form.pricing_type,
-      default_price: Number(form.default_price) || 0,
+      default_price: defaultPrice,
       active: form.active,
       visible_to_client: form.visible_to_client,
     };
@@ -160,6 +177,10 @@ export function ServicesClient() {
   }
 
   async function deactivateService(service: Service) {
+    if (!window.confirm(`Deactivate ${service.name}?`)) {
+      return;
+    }
+
     setError(null);
     const { error: updateError } = await supabase
       .from("services")
@@ -228,13 +249,13 @@ export function ServicesClient() {
           </div>
 
           {loading ? (
-            <p className="text-sm text-slate-500">Loading services...</p>
+            <LoadingState label="Loading services..." />
           ) : filteredServices.length === 0 ? (
             <EmptyState title="No services found" body="Create a service or adjust the filters." />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <div className="max-h-[34rem] overflow-auto">
+              <table className="w-full min-w-[900px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Service</th>
                     <th className="px-4 py-3 font-semibold">Category</th>
