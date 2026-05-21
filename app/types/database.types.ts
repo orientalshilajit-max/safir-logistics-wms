@@ -108,12 +108,14 @@ export type Database = {
       };
       clients: {
         Row: {
+          auth_user_id: string | null;
           company_name: string;
           contact_name: string;
           created_at: string;
           deleted_at: string | null;
           email: string;
           id: string;
+          login_status: "no login" | "invited" | "active";
           notes: string | null;
           phone: string | null;
           status: string;
@@ -121,12 +123,14 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          auth_user_id?: string | null;
           company_name: string;
           contact_name: string;
           created_at?: string;
           deleted_at?: string | null;
           email: string;
           id?: string;
+          login_status?: "no login" | "invited" | "active";
           notes?: string | null;
           phone?: string | null;
           status?: string;
@@ -134,12 +138,14 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          auth_user_id?: string | null;
           company_name?: string;
           contact_name?: string;
           created_at?: string;
           deleted_at?: string | null;
           email?: string;
           id?: string;
+          login_status?: "no login" | "invited" | "active";
           notes?: string | null;
           phone?: string | null;
           status?: string;

@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -24,6 +25,7 @@ type ClientForm = {
   phone: string;
   telegram: string;
   status: string;
+  login_status: Client["login_status"];
   notes: string;
 };
 
@@ -34,27 +36,28 @@ const emptyForm: ClientForm = {
   phone: "",
   telegram: "",
   status: "active",
+  login_status: "no login",
   notes: "",
 };
 
 export function ClientsClient() {
+  const { session } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [form, setForm] = useState<ClientForm>(emptyForm);
   const [editing, setEditing] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [creatingAccessId, setCreatingAccessId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
+  const [onboardingInstructions, setOnboardingInstructions] = useState<string[]>([]);
 
   const activeCount = useMemo(
     () => clients.filter((client) => client.status === "active").length,
     [clients],
   );
 
-  useEffect(() => {
-    void loadClients();
-  }, []);
-
-  async function loadClients() {
+  const loadClients = useCallback(async () => {
     setLoading(true);
     setError(null);
     const { data, error: loadError } = await supabase
@@ -70,7 +73,24 @@ export function ClientsClient() {
     }
 
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadInitialClients() {
+      await Promise.resolve();
+      if (active) {
+        await loadClients();
+      }
+    }
+
+    void loadInitialClients();
+
+    return () => {
+      active = false;
+    };
+  }, [loadClients]);
 
   function startEdit(client: Client) {
     setEditing(client);
@@ -81,6 +101,7 @@ export function ClientsClient() {
       phone: client.phone ?? "",
       telegram: client.telegram ?? "",
       status: client.status,
+      login_status: client.login_status,
       notes: client.notes ?? "",
     });
   }
@@ -111,6 +132,7 @@ export function ClientsClient() {
       phone: form.phone.trim() || null,
       telegram: form.telegram.trim() || null,
       status: form.status.trim() || "active",
+      login_status: form.login_status,
       notes: form.notes.trim() || null,
     };
 
@@ -146,6 +168,39 @@ export function ClientsClient() {
     }
   }
 
+  async function createLoginAccess(client: Client) {
+    if (creatingAccessId) {
+      return;
+    }
+
+    setCreatingAccessId(client.id);
+    setError(null);
+    setOnboardingMessage(null);
+    setOnboardingInstructions([]);
+
+    const response = await fetch(`/api/clients/${client.id}/login-access`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session?.access_token ?? ""}`,
+      },
+    });
+    const body = (await response.json()) as {
+      message?: string;
+      error?: string;
+      instructions?: string[];
+    };
+
+    if (!response.ok) {
+      setError(body.error ?? "Unable to create login access.");
+      setOnboardingInstructions(body.instructions ?? manualOnboardingInstructions(client));
+    } else {
+      setOnboardingMessage(body.message ?? `Invitation sent to ${client.email}.`);
+      await loadClients();
+    }
+
+    setCreatingAccessId(null);
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -171,6 +226,7 @@ export function ClientsClient() {
                     <th className="px-4 py-3 font-semibold">Contact</th>
                     <th className="px-4 py-3 font-semibold">Email</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Login</th>
                     <th className="px-4 py-3 font-semibold">Actions</th>
                   </tr>
                 </thead>
@@ -186,9 +242,22 @@ export function ClientsClient() {
                         </StatusBadge>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-2">
+                        <StatusBadge tone={loginStatusTone(client.login_status)}>
+                          {client.login_status}
+                        </StatusBadge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
                           <Button type="button" variant="secondary" onClick={() => startEdit(client)}>
                             Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={creatingAccessId === client.id}
+                            onClick={() => void createLoginAccess(client)}
+                          >
+                            {creatingAccessId === client.id ? "Creating..." : "Create Login Access"}
                           </Button>
                           <Button type="button" variant="danger" onClick={() => void deleteClient(client)}>
                             Delete
@@ -258,6 +327,22 @@ export function ClientsClient() {
                 <option value="inactive">inactive</option>
               </select>
             </Field>
+            <Field label="Login status">
+              <select
+                className={inputClassName}
+                value={form.login_status}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    login_status: event.target.value as Client["login_status"],
+                  })
+                }
+              >
+                <option value="no login">no login</option>
+                <option value="invited">invited</option>
+                <option value="active">active</option>
+              </select>
+            </Field>
             <Field label="Notes">
               <textarea
                 className={textAreaClassName}
@@ -276,8 +361,71 @@ export function ClientsClient() {
               ) : null}
             </div>
           </form>
+          {editing ? (
+            <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-blue-950">Client portal access</p>
+                  <p className="mt-1 text-sm text-blue-700">
+                    Send an invite and link this client to a Supabase Auth user.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={creatingAccessId === editing.id}
+                  onClick={() => void createLoginAccess(editing)}
+                >
+                  {creatingAccessId === editing.id ? "Creating..." : "Create Login Access"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </Panel>
       </div>
+      {onboardingMessage || onboardingInstructions.length > 0 ? (
+        <Panel title="Client onboarding">
+          {onboardingMessage ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+              {onboardingMessage}
+            </div>
+          ) : null}
+          {onboardingInstructions.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-950">
+                Manual Supabase Auth setup required
+              </p>
+              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-amber-800">
+                {onboardingInstructions.map((instruction) => (
+                  <li key={instruction}>{instruction}</li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+        </Panel>
+      ) : null}
     </div>
   );
+}
+
+function loginStatusTone(status: Client["login_status"]) {
+  if (status === "active") {
+    return "emerald";
+  }
+
+  if (status === "invited") {
+    return "blue";
+  }
+
+  return "slate";
+}
+
+function manualOnboardingInstructions(client: Client) {
+  return [
+    "Add SUPABASE_SERVICE_ROLE_KEY to the server environment to enable automatic invites.",
+    `Create or invite an Auth user for ${client.email}.`,
+    `Set app_metadata to {"role":"client","client_id":"${client.id}"}.`,
+    `Set user_metadata client_id to "${client.id}".`,
+    'Update this client record with the Auth user id and set login_status to "invited" or "active".',
+  ];
 }
