@@ -122,6 +122,49 @@ export const dashboardRoutes: DashboardRoute[] = [
   },
 ];
 
+export const clientPortalRoutes: DashboardRoute[] = [
+  {
+    href: "/",
+    label: "Dashboard",
+    eyebrow: "Client Portal",
+    title: "My Dashboard",
+    description: "A simplified view of your inventory, inbound shipments, service requests, and invoices.",
+    status: "Live",
+  },
+  {
+    href: "/inventory",
+    label: "My Inventory",
+    eyebrow: "Stock",
+    title: "My Inventory",
+    description: "Review available, reserved, processing, shipped, and damaged inventory balances.",
+    status: "Live",
+  },
+  {
+    href: "/incoming-shipments",
+    label: "My Incoming Shipments",
+    eyebrow: "Inbound",
+    title: "My Incoming Shipments",
+    description: "Track inbound shipments, boxes, tracking numbers, and receiving status.",
+    status: "Live",
+  },
+  {
+    href: "/requests",
+    label: "My Requests",
+    eyebrow: "Client Work",
+    title: "My Requests",
+    description: "Create and monitor prep, labeling, packing, and special handling requests.",
+    status: "Live",
+  },
+  {
+    href: "/invoices",
+    label: "My Invoices",
+    eyebrow: "Billing",
+    title: "My Invoices",
+    description: "Review generated invoices and payment status.",
+    status: "Live",
+  },
+];
+
 export function getDashboardRoute(href: string) {
   const route = dashboardRoutes.find((item) => item.href === href);
 

@@ -19,6 +19,11 @@ import {
 } from "@/app/components/wms-ui";
 import { formatMoney, formatPricingType } from "../services/services-client";
 import { ActivityTimeline } from "@/app/components/activity-timeline";
+import {
+  hasMissingBoxLabels,
+  LabelManager,
+  type RequestBoxOption,
+} from "@/app/components/label-manager";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku">;
@@ -37,7 +42,11 @@ type Override = Pick<
 type ServiceRequest = Tables<"service_requests"> & {
   clients: Client | null;
   request_items: { id: string }[];
-  request_boxes: { id: string }[];
+  request_boxes: RequestBoxOption[];
+  shipping_labels: Pick<
+    Tables<"shipping_labels">,
+    "id" | "label_category" | "request_box_id" | "box_number"
+  >[];
 };
 
 type RequestLine = {
@@ -76,6 +85,8 @@ const requestStatuses: ServiceRequest["status"][] = [
   "Approved",
   "Rejected",
   "Waiting Labels",
+  "Labels Uploaded",
+  "Ready to Pack",
   "Ready for Prep",
   "Prep in Progress",
   "QC Check",
@@ -125,6 +136,7 @@ export function RequestsClient() {
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  const isClientPortal = role === "client";
   const selectedClientId = isAdmin ? form.client_id : clientId;
   const clientInventory = useMemo(
     () =>
@@ -146,6 +158,10 @@ export function RequestsClient() {
       return matchesStatus && matchesQuery;
     });
   }, [query, requests, statusFilter]);
+  const selectedRequest = useMemo(
+    () => requests.find((request) => request.id === selectedRequestId) ?? null,
+    [requests, selectedRequestId],
+  );
   const estimatedTotal = useMemo(
     () => calculateEstimate(form, inventory, services, overrides, selectedClientId),
     [form, inventory, overrides, selectedClientId, services],
@@ -154,31 +170,44 @@ export function RequestsClient() {
   const loadData = useCallback(async () => {
     setError(null);
 
+    const clientsQuery = supabase.from("clients").select("id, company_name").is("deleted_at", null).order("company_name");
+    const inventoryQuery = supabase
+      .from("inventory")
+      .select("*, clients(id, company_name), products(id, product_name, sku, fnsku)")
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false });
+    const servicesQuery = supabase
+      .from("services")
+      .select("id, name, category, pricing_type, default_price, active")
+      .is("deleted_at", null)
+      .eq("active", true)
+      .order("category")
+      .order("name");
+    const overridesQuery = supabase
+      .from("client_pricing_overrides")
+      .select("client_id, service_id, override_price, active")
+      .is("deleted_at", null)
+      .eq("active", true);
+    const requestsQuery = supabase
+      .from("service_requests")
+      .select("*, clients(id, company_name), request_items(id), request_boxes(id, box_number, tracking_number), shipping_labels(id, label_category, request_box_id, box_number)")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+
+    if (isClientPortal && clientId) {
+      clientsQuery.eq("id", clientId);
+      inventoryQuery.eq("client_id", clientId);
+      overridesQuery.eq("client_id", clientId);
+      requestsQuery.eq("client_id", clientId);
+    }
+
     const [clientsResult, inventoryResult, servicesResult, overridesResult, requestsResult] =
       await Promise.all([
-        supabase.from("clients").select("id, company_name").is("deleted_at", null).order("company_name"),
-        supabase
-          .from("inventory")
-          .select("*, clients(id, company_name), products(id, product_name, sku, fnsku)")
-          .is("deleted_at", null)
-          .order("updated_at", { ascending: false }),
-        supabase
-          .from("services")
-          .select("id, name, category, pricing_type, default_price, active")
-          .is("deleted_at", null)
-          .eq("active", true)
-          .order("category")
-          .order("name"),
-        supabase
-          .from("client_pricing_overrides")
-          .select("client_id, service_id, override_price, active")
-          .is("deleted_at", null)
-          .eq("active", true),
-        supabase
-          .from("service_requests")
-          .select("*, clients(id, company_name), request_items(id), request_boxes(id)")
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false }),
+        clientsQuery,
+        inventoryQuery,
+        servicesQuery,
+        overridesQuery,
+        requestsQuery,
       ]);
 
     if (clientsResult.error) setError(clientsResult.error.message);
@@ -205,7 +234,7 @@ export function RequestsClient() {
     }
 
     setLoading(false);
-  }, [clientId, isAdmin]);
+  }, [clientId, isAdmin, isClientPortal]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadData(), 0);
@@ -456,20 +485,37 @@ export function RequestsClient() {
     setUpdatingStatusId(null);
   }
 
+  function applyLocalStatus(status: ServiceRequest["status"]) {
+    if (!selectedRequestId) return;
+
+    setRequests((current) =>
+      current.map((request) =>
+        request.id === selectedRequestId ? { ...request, status } : request,
+      ),
+    );
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Client Work"
-        title="Service Requests"
-        description="Create service requests from available inventory, estimate service costs, and reserve stock when submitted."
+        title={isClientPortal ? "My Requests" : "Service Requests"}
+        description={
+          isClientPortal
+            ? "Create prep requests from your available inventory and track approval or work status."
+            : "Create service requests from available inventory, estimate service costs, and reserve stock when submitted."
+        }
         action={<StatusBadge tone="blue">{requests.length} requests</StatusBadge>}
       />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
-        <Panel title="Requests" description="Submitted requests require admin approval before work starts.">
+        <Panel
+          title={isClientPortal ? "My request list" : "Requests"}
+          description="Submitted requests require admin approval before work starts."
+        >
           <div className="mb-4 flex flex-wrap gap-2">
-            {(["all", "Pending Approval", "Approved", "Need Client Action", "Completed"] as const).map(
+            {(["all", "Pending Approval", "Waiting Labels", "Labels Uploaded", "Ready to Pack", "Completed"] as const).map(
               (status) => (
                 <QuickFilterButton
                   key={status}
@@ -504,7 +550,14 @@ export function RequestsClient() {
           {loading ? (
             <LoadingState label="Loading service requests..." />
           ) : filteredRequests.length === 0 ? (
-            <EmptyState title="No service requests found" body="Create a request from available inventory to begin." />
+            <EmptyState
+              title={isClientPortal ? "No requests yet" : "No service requests found"}
+              body={
+                isClientPortal
+                  ? "Create a request when you have available inventory ready for prep work."
+                  : "Create a request from available inventory to begin."
+              }
+            />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
               <table className="w-full min-w-[900px] text-left text-sm tabular-nums">
@@ -520,63 +573,73 @@ export function RequestsClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredRequests.map((request) => (
-                    <tr
-                      key={request.id}
-                      className="cursor-pointer hover:bg-slate-50"
-                      onClick={() => setSelectedRequestId(request.id)}
-                    >
-                      <td className="px-4 py-3 font-medium text-slate-950">
-                        {request.request_number}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {request.clients?.company_name ?? "Unknown"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{request.request_items.length}</td>
-                      <td className="px-4 py-3 text-slate-600">{request.request_boxes.length}</td>
-                      <td className="px-4 py-3 font-medium text-slate-950">
-                        {formatMoney(request.estimated_total)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge tone={statusTone(request.status)}>{request.status}</StatusBadge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={!isAdmin || updatingStatusId === request.id}
-                            onClick={() => void updateRequestStatus(request, "Approved")}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="danger"
-                            disabled={!isAdmin || updatingStatusId === request.id}
-                            onClick={() => void updateRequestStatus(request, "Rejected")}
-                          >
-                            Reject
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={!isAdmin || updatingStatusId === request.id}
-                            onClick={() => void updateRequestStatus(request, "Need Client Action")}
-                          >
-                            Request changes
-                          </Button>
-                          <Button
-                            type="button"
-                            disabled={!isAdmin || updatingStatusId === request.id}
-                            onClick={() => void updateRequestStatus(request, "Completed")}
-                          >
-                            Complete
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredRequests.map((request) => {
+                    const missingLabels = hasMissingBoxLabels(
+                      request.request_boxes,
+                      request.shipping_labels,
+                    );
+
+                    return (
+                      <tr
+                        key={request.id}
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => setSelectedRequestId(request.id)}
+                      >
+                        <td className="px-4 py-3 font-medium text-slate-950">
+                          {request.request_number}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {request.clients?.company_name ?? "Unknown"}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{request.request_items.length}</td>
+                        <td className="px-4 py-3 text-slate-600">{request.request_boxes.length}</td>
+                        <td className="px-4 py-3 font-medium text-slate-950">
+                          {formatMoney(request.estimated_total)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <StatusBadge tone={statusTone(request.status)}>{request.status}</StatusBadge>
+                            {missingLabels ? <StatusBadge tone="amber">Missing labels</StatusBadge> : null}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={!isAdmin || updatingStatusId === request.id}
+                              onClick={() => void updateRequestStatus(request, "Approved")}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="danger"
+                              disabled={!isAdmin || updatingStatusId === request.id}
+                              onClick={() => void updateRequestStatus(request, "Rejected")}
+                            >
+                              Reject
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={!isAdmin || updatingStatusId === request.id}
+                              onClick={() => void updateRequestStatus(request, "Need Client Action")}
+                            >
+                              Request changes
+                            </Button>
+                            <Button
+                              type="button"
+                              disabled={!isAdmin || updatingStatusId === request.id}
+                              onClick={() => void updateRequestStatus(request, "Completed")}
+                            >
+                              Complete
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -584,7 +647,10 @@ export function RequestsClient() {
         </Panel>
 
         <div className="space-y-5">
-          <Panel title="Create request" description="Quantities are reserved from available inventory when submitted.">
+          <Panel
+            title={isClientPortal ? "Create my request" : "Create request"}
+            description="Quantities are reserved from available inventory when submitted."
+          >
             <form className="space-y-5" onSubmit={(event) => void createAndSubmitRequest(event)}>
             {isAdmin ? (
               <Field label="Client">
@@ -816,6 +882,14 @@ export function RequestsClient() {
             entityId={selectedRequestId}
             title="Request activity"
           />
+          <LabelManager
+            clientId={selectedRequest?.client_id ?? selectedClientId}
+            serviceRequestId={selectedRequestId}
+            boxes={selectedRequest?.request_boxes ?? []}
+            title="Request labels"
+            onLabelsChange={loadData}
+            onStatusChange={applyLocalStatus}
+          />
         </div>
       </div>
     </div>
@@ -985,7 +1059,7 @@ function validateRequest(
 }
 
 function statusTone(status: ServiceRequest["status"]) {
-  if (status === "Approved" || status === "Completed" || status === "Shipped") {
+  if (status === "Approved" || status === "Completed" || status === "Shipped" || status === "Labels Uploaded") {
     return "emerald";
   }
 
@@ -995,6 +1069,10 @@ function statusTone(status: ServiceRequest["status"]) {
 
   if (status === "Pending Approval" || status === "Waiting Labels") {
     return "amber";
+  }
+
+  if (status === "Ready to Pack") {
+    return "cyan";
   }
 
   return "blue";

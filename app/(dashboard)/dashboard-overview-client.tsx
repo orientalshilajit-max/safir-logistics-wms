@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import { ErrorBanner, PageHeader, Panel, StatusBadge } from "@/app/components/wms-ui";
 
@@ -9,6 +11,8 @@ type Overview = {
   products: number;
   incomingShipments: number;
   inventoryAvailable: number;
+  requests: number;
+  invoices: number;
 };
 
 const initialOverview: Overview = {
@@ -16,32 +20,69 @@ const initialOverview: Overview = {
   products: 0,
   incomingShipments: 0,
   inventoryAvailable: 0,
+  requests: 0,
+  invoices: 0,
 };
 
 export function DashboardOverviewClient() {
+  const { role, clientId } = useAuth();
   const [overview, setOverview] = useState<Overview>(initialOverview);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isClientPortal = role === "client";
 
-  async function loadOverview() {
+  const loadOverview = useCallback(async () => {
     try {
-      const [clients, products, incomingShipments, inventory] = await Promise.all([
-        supabase
-          .from("clients")
-          .select("id", { count: "exact", head: true })
-          .is("deleted_at", null),
-        supabase
-          .from("products")
-          .select("id", { count: "exact", head: true })
-          .is("deleted_at", null),
-        supabase
-          .from("incoming_shipments")
-          .select("id", { count: "exact", head: true })
-          .is("deleted_at", null),
-        supabase.from("inventory").select("available_qty"),
+      const clientsQuery = supabase
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null);
+      const productsQuery = supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null);
+      const shipmentsQuery = supabase
+        .from("incoming_shipments")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null);
+      const inventoryQuery = supabase
+        .from("inventory")
+        .select("available_qty")
+        .is("deleted_at", null);
+      const requestsQuery = supabase
+        .from("service_requests")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null);
+      const invoicesQuery = supabase
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .is("deleted_at", null);
+
+      if (isClientPortal && clientId) {
+        clientsQuery.eq("id", clientId);
+        productsQuery.eq("client_id", clientId);
+        shipmentsQuery.eq("client_id", clientId);
+        inventoryQuery.eq("client_id", clientId);
+        requestsQuery.eq("client_id", clientId);
+        invoicesQuery.eq("client_id", clientId);
+      }
+
+      const [clients, products, incomingShipments, inventory, requests, invoices] = await Promise.all([
+        clientsQuery,
+        productsQuery,
+        shipmentsQuery,
+        inventoryQuery,
+        requestsQuery,
+        invoicesQuery,
       ]);
 
-      const firstError = clients.error ?? products.error ?? incomingShipments.error ?? inventory.error;
+      const firstError =
+        clients.error ??
+        products.error ??
+        incomingShipments.error ??
+        inventory.error ??
+        requests.error ??
+        invoices.error;
 
       if (firstError) {
         console.error("Dashboard KPI fetch failed", firstError);
@@ -55,6 +96,8 @@ export function DashboardOverviewClient() {
         incomingShipments: incomingShipments.count ?? 0,
         inventoryAvailable:
           inventory.data?.reduce((total, row) => total + (row.available_qty ?? 0), 0) ?? 0,
+        requests: requests.count ?? 0,
+        invoices: invoices.count ?? 0,
       });
     } catch (fetchError) {
       console.error("Dashboard KPI fetch failed", fetchError);
@@ -62,13 +105,52 @@ export function DashboardOverviewClient() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [clientId, isClientPortal]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadOverview(), 0);
 
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [loadOverview]);
+
+  if (isClientPortal) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          eyebrow="Client Portal"
+          title="My Dashboard"
+          description="A simplified view of your inventory, inbound shipments, prep requests, invoices, and notifications."
+          action={<StatusBadge tone="emerald">Client access</StatusBadge>}
+        />
+        <ErrorBanner message={error} />
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Available Units" value={overview.inventoryAvailable} loading={loading} />
+          <Metric label="My Incoming" value={overview.incomingShipments} loading={loading} />
+          <Metric label="My Requests" value={overview.requests} loading={loading} />
+          <Metric label="My Invoices" value={overview.invoices} loading={loading} />
+        </section>
+
+        <Panel
+          title="Client workspace"
+          description="Jump into the areas available to your account."
+        >
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <PortalLink href="/inventory" title="My Inventory" body="Check available, reserved, processing, shipped, and damaged units." />
+            <PortalLink href="/incoming-shipments" title="My Incoming Shipments" body="Track inbound shipments and receiving progress." />
+            <PortalLink href="/requests" title="My Requests" body="Create prep requests and follow approval or work status." />
+            <PortalLink href="/invoices" title="My Invoices" body="Review invoices, due dates, and payment status." />
+          </div>
+        </Panel>
+
+        <Panel title="Notifications" description="Use the notification button in the top bar for recent updates.">
+          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm leading-6 text-slate-600">
+            Shipment updates, request approvals, discrepancies, and invoice notices appear in the notification menu.
+          </div>
+        </Panel>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -119,10 +201,12 @@ function Metric({
   label,
   value,
   loading,
+  placeholder,
 }: {
   label: string;
   value: number;
   loading: boolean;
+  placeholder?: string;
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -134,10 +218,30 @@ function Metric({
         <div className="mt-5 h-9 w-24 animate-pulse rounded-md bg-slate-100" />
       ) : (
         <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">
-          {value}
+          {placeholder ?? value}
         </p>
       )}
     </div>
+  );
+}
+
+function PortalLink({
+  href,
+  title,
+  body,
+}: {
+  href: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-white focus:outline-none focus:ring-4 focus:ring-slate-100"
+    >
+      <p className="text-sm font-semibold text-slate-950">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
+    </Link>
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -21,6 +22,7 @@ type InventoryRow = Tables<"inventory"> & {
 };
 
 export function InventoryClient() {
+  const { role, clientId } = useAuth();
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [stockFilter, setStockFilter] = useState<"all" | "available" | "reserved" | "damaged">("all");
   const [loading, setLoading] = useState(true);
@@ -50,12 +52,20 @@ export function InventoryClient() {
     [rows, stockFilter],
   );
 
-  async function loadInventory() {
-    const { data, error: loadError } = await supabase
+  const isClientPortal = role === "client";
+
+  const loadInventory = useCallback(async () => {
+    const query = supabase
       .from("inventory")
       .select("*, clients(id, company_name), products(id, product_name, sku, fnsku, asin)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
+
+    if (isClientPortal && clientId) {
+      query.eq("client_id", clientId);
+    }
+
+    const { data, error: loadError } = await query;
 
     if (loadError) {
       setError(loadError.message);
@@ -64,20 +74,24 @@ export function InventoryClient() {
     }
 
     setLoading(false);
-  }
+  }, [clientId, isClientPortal]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadInventory(), 0);
 
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [loadInventory]);
 
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Stock"
-        title="Inventory"
-        description="Live inventory balances created from completed receiving activity."
+        title={isClientPortal ? "My Inventory" : "Inventory"}
+        description={
+          isClientPortal
+            ? "Your current inventory balances across available, reserved, processing, shipped, and damaged units."
+            : "Live inventory balances created from completed receiving activity."
+        }
         action={<StatusBadge tone="emerald">{totals.available} available</StatusBadge>}
       />
       <ErrorBanner message={error} />
@@ -109,7 +123,11 @@ export function InventoryClient() {
         ) : filteredRows.length === 0 ? (
           <EmptyState
             title="No inventory rows match this view"
-            body="Try another quick filter or complete receiving to create inventory records."
+            body={
+              isClientPortal
+                ? "No inventory is visible for this filter yet. Try another view or check back after receiving is complete."
+                : "Try another quick filter or complete receiving to create inventory records."
+            }
           />
         ) : (
           <div className="max-h-[34rem] overflow-auto">

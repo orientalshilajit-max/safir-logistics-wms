@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { dashboardRoutes } from "@/app/lib/dashboard";
+import { clientPortalRoutes, dashboardRoutes, type DashboardRoute } from "@/app/lib/dashboard";
 import { LogoutButton } from "@/app/components/logout-button";
 import { NotificationMenu } from "@/app/components/notification-menu";
 import { useAuth } from "@/app/auth/auth-provider";
@@ -18,12 +18,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { role } = useAuth();
   const visibleRoutes = getVisibleRoutes(role);
+  const isClientPortal = role === "client";
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="flex min-h-screen">
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:block">
-          <SidebarContent pathname={pathname} routes={visibleRoutes} />
+          <SidebarContent pathname={pathname} routes={visibleRoutes} role={role} />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -34,12 +35,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                   Safir Logistics
                 </p>
                 <h1 className="truncate text-lg font-semibold text-slate-950">
-                  Prep Center WMS
+                  {isClientPortal ? "Client Portal" : "Prep Center WMS"}
                 </h1>
               </div>
               <div className="flex items-center gap-3">
                 <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600 sm:inline-flex">
-                  Light workspace
+                  {isClientPortal ? "My workspace" : "Light workspace"}
                 </span>
                 <NotificationMenu />
                 <LogoutButton />
@@ -72,10 +73,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 function SidebarContent({
   pathname,
   routes,
+  role,
 }: {
   pathname: string;
-  routes: typeof dashboardRoutes;
+  routes: DashboardRoute[];
+  role: UserRole;
 }) {
+  const isClientPortal = role === "client";
+
   return (
     <div className="flex h-screen flex-col">
       <div className="border-b border-slate-200 px-6 py-5">
@@ -84,8 +89,12 @@ function SidebarContent({
             SL
           </div>
           <div>
-            <p className="text-sm font-semibold text-slate-950">Safir WMS</p>
-            <p className="text-xs text-slate-500">Prep center operations</p>
+            <p className="text-sm font-semibold text-slate-950">
+              {isClientPortal ? "Safir Portal" : "Safir WMS"}
+            </p>
+            <p className="text-xs text-slate-500">
+              {isClientPortal ? "Client workspace" : "Prep center operations"}
+            </p>
           </div>
         </div>
       </div>
@@ -123,9 +132,13 @@ function SidebarContent({
 
       <div className="border-t border-slate-200 p-4">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-950">Split panel ready</p>
+          <p className="text-sm font-semibold text-slate-950">
+            {isClientPortal ? "Need help?" : "Split panel ready"}
+          </p>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Pages are structured for future detail drawers, queue previews, and side-by-side workflows.
+            {isClientPortal
+              ? "Use requests to send prep instructions and invoices to review billing status."
+              : "Pages are structured for future detail drawers, queue previews, and side-by-side workflows."}
           </p>
         </div>
       </div>
@@ -134,6 +147,10 @@ function SidebarContent({
 }
 
 function getVisibleRoutes(role: UserRole) {
+  if (role === "client") {
+    return clientPortalRoutes;
+  }
+
   if (role !== "warehouse_operator") {
     return dashboardRoutes;
   }

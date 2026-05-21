@@ -906,6 +906,8 @@ export type Database = {
             | "Approved"
             | "Rejected"
             | "Waiting Labels"
+            | "Labels Uploaded"
+            | "Ready to Pack"
             | "Ready for Prep"
             | "Prep in Progress"
             | "QC Check"
@@ -941,6 +943,8 @@ export type Database = {
             | "Approved"
             | "Rejected"
             | "Waiting Labels"
+            | "Labels Uploaded"
+            | "Ready to Pack"
             | "Ready for Prep"
             | "Prep in Progress"
             | "QC Check"
@@ -976,6 +980,8 @@ export type Database = {
             | "Approved"
             | "Rejected"
             | "Waiting Labels"
+            | "Labels Uploaded"
+            | "Ready to Pack"
             | "Ready for Prep"
             | "Prep in Progress"
             | "QC Check"
@@ -995,6 +1001,100 @@ export type Database = {
             columns: ["client_id"];
             isOneToOne: false;
             referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      shipping_labels: {
+        Row: {
+          box_number: number | null;
+          client_id: string;
+          created_at: string;
+          deleted_at: string | null;
+          entity_id: string | null;
+          entity_type: "service_requests" | "outbound_shipments";
+          file_name: string;
+          file_url: string;
+          id: string;
+          label_category:
+            | "fba_box_label"
+            | "shipping_label"
+            | "pallet_label"
+            | "misc_document";
+          mime_type: string | null;
+          notes: string | null;
+          request_box_id: string | null;
+          service_request_id: string | null;
+          storage_path: string | null;
+          updated_at: string;
+          uploaded_by: string | null;
+        };
+        Insert: {
+          box_number?: number | null;
+          client_id: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          entity_id?: string | null;
+          entity_type?: "service_requests" | "outbound_shipments";
+          file_name: string;
+          file_url: string;
+          id?: string;
+          label_category:
+            | "fba_box_label"
+            | "shipping_label"
+            | "pallet_label"
+            | "misc_document";
+          mime_type?: string | null;
+          notes?: string | null;
+          request_box_id?: string | null;
+          service_request_id?: string | null;
+          storage_path?: string | null;
+          updated_at?: string;
+          uploaded_by?: string | null;
+        };
+        Update: {
+          box_number?: number | null;
+          client_id?: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          entity_id?: string | null;
+          entity_type?: "service_requests" | "outbound_shipments";
+          file_name?: string;
+          file_url?: string;
+          id?: string;
+          label_category?:
+            | "fba_box_label"
+            | "shipping_label"
+            | "pallet_label"
+            | "misc_document";
+          mime_type?: string | null;
+          notes?: string | null;
+          request_box_id?: string | null;
+          service_request_id?: string | null;
+          storage_path?: string | null;
+          updated_at?: string;
+          uploaded_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "shipping_labels_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipping_labels_request_box_id_fkey";
+            columns: ["request_box_id"];
+            isOneToOne: false;
+            referencedRelation: "request_boxes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipping_labels_service_request_id_fkey";
+            columns: ["service_request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
             referencedColumns: ["id"];
           },
         ];

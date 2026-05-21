@@ -73,7 +73,7 @@ const emptyLineForm: LineForm = {
 };
 
 export function InvoicesClient() {
-  const { role } = useAuth();
+  const { role, clientId } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [lineForm, setLineForm] = useState<LineForm>(emptyLineForm);
@@ -86,6 +86,7 @@ export function InvoicesClient() {
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  const isClientPortal = role === "client";
   const selectedInvoice = invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? invoices[0];
   const filteredInvoices = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -104,17 +105,25 @@ export function InvoicesClient() {
 
   const loadInvoices = useCallback(async () => {
     setError(null);
-    const { error: overdueError } = await supabase.rpc("mark_overdue_invoices");
-    if (overdueError) {
-      setError(overdueError.message);
+    if (isAdmin) {
+      const { error: overdueError } = await supabase.rpc("mark_overdue_invoices");
+      if (overdueError) {
+        setError(overdueError.message);
+      }
     }
-    const { data, error: loadError } = await supabase
+    const invoicesQuery = supabase
       .from("invoices")
       .select(
         "*, clients(id, company_name), service_requests(id, request_number), invoice_items(*)",
       )
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
+
+    if (isClientPortal && clientId) {
+      invoicesQuery.eq("client_id", clientId);
+    }
+
+    const { data, error: loadError } = await invoicesQuery;
 
     if (loadError) {
       setError(loadError.message);
@@ -125,7 +134,7 @@ export function InvoicesClient() {
     }
 
     setLoading(false);
-  }, []);
+  }, [clientId, isAdmin, isClientPortal]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadInvoices(), 0);
@@ -300,14 +309,21 @@ export function InvoicesClient() {
     <div className="space-y-5">
       <PageHeader
         eyebrow="Billing"
-        title="Invoices"
-        description="Generated from completed service requests. Payments are tracked manually."
+        title={isClientPortal ? "My Invoices" : "Invoices"}
+        description={
+          isClientPortal
+            ? "Review invoices generated from completed service requests and track payment status."
+            : "Generated from completed service requests. Payments are tracked manually."
+        }
         action={<StatusBadge tone="blue">{invoices.length} invoices</StatusBadge>}
       />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
-        <Panel title="Invoice list" description="One invoice is generated when a service request is completed.">
+        <Panel
+          title={isClientPortal ? "My invoice list" : "Invoice list"}
+          description="One invoice is generated when a service request is completed."
+        >
           <div className="mb-4 flex flex-wrap gap-2">
             {(["all", "Draft", "Unpaid", "Partial Paid", "Paid", "Overdue"] as const).map(
               (status) => (
@@ -344,7 +360,14 @@ export function InvoicesClient() {
           {loading ? (
             <LoadingState label="Loading invoices..." />
           ) : filteredInvoices.length === 0 ? (
-            <EmptyState title="No invoices found" body="Complete a service request to generate an invoice." />
+            <EmptyState
+              title={isClientPortal ? "No invoices yet" : "No invoices found"}
+              body={
+                isClientPortal
+                  ? "Invoices will appear here after completed service requests are billed."
+                  : "Complete a service request to generate an invoice."
+              }
+            />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
               <table className="w-full min-w-[860px] text-left text-sm tabular-nums">

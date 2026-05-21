@@ -7,6 +7,18 @@ const warehouseRestrictedPaths = [
   "/settings",
 ];
 
+const clientRestrictedPaths = [
+  "/clients",
+  "/services",
+  "/reports",
+  "/settings",
+  "/client-pricing-overrides",
+  "/warehouse-tasks",
+  "/receiving-queue",
+  "/products",
+  "/outbound-shipments",
+];
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const isLogin = pathname === "/login";
@@ -23,12 +35,22 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  if (
-    accessToken &&
-    getRoleFromToken(accessToken) === "warehouse_operator" &&
-    warehouseRestrictedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-  ) {
-    return NextResponse.redirect(new URL("/warehouse-tasks", request.url));
+  if (accessToken) {
+    const role = getRoleFromToken(accessToken);
+
+    if (
+      role === "warehouse_operator" &&
+      warehouseRestrictedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+    ) {
+      return NextResponse.redirect(new URL("/warehouse-tasks", request.url));
+    }
+
+    if (
+      role === "client" &&
+      clientRestrictedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+    ) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
   }
 
   return NextResponse.next();
@@ -47,9 +69,9 @@ function getRoleFromToken(token: string) {
       app_metadata?: { role?: string };
     };
 
-    return decoded.app_metadata?.role ?? null;
+    return decoded.app_metadata?.role ?? "client";
   } catch {
-    return null;
+    return "client";
   }
 }
 

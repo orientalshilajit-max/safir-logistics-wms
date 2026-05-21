@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -60,6 +61,7 @@ const emptyForm: ShipmentForm = {
 };
 
 export function IncomingShipmentsClient() {
+  const { role, clientId } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
@@ -70,6 +72,7 @@ export function IncomingShipmentsClient() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isClientPortal = role === "client";
 
   const availableProducts = useMemo(
     () => products.filter((product) => product.client_id === form.client_id),
@@ -83,34 +86,45 @@ export function IncomingShipmentsClient() {
     [shipments, statusFilter],
   );
 
-  useEffect(() => {
-    void loadData();
-  }, []);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
+    const clientsQuery = supabase
+      .from("clients")
+      .select("id, company_name")
+      .is("deleted_at", null)
+      .order("company_name");
+    const productsQuery = supabase
+      .from("products")
+      .select("id, client_id, product_name, sku")
+      .is("deleted_at", null)
+      .eq("active", true)
+      .order("product_name");
+    const statusesQuery = supabase
+      .from("statuses")
+      .select("id, name, color")
+      .eq("category", "incoming_shipment")
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order("sort_order");
+    const shipmentsQuery = supabase
+      .from("incoming_shipments")
+      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id)")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+
+    if (isClientPortal && clientId) {
+      clientsQuery.eq("id", clientId);
+      productsQuery.eq("client_id", clientId);
+      shipmentsQuery.eq("client_id", clientId);
+    }
+
     const [clientsResult, productsResult, statusesResult, shipmentsResult] = await Promise.all([
-      supabase.from("clients").select("id, company_name").is("deleted_at", null).order("company_name"),
-      supabase
-        .from("products")
-        .select("id, client_id, product_name, sku")
-        .is("deleted_at", null)
-        .eq("active", true)
-        .order("product_name"),
-      supabase
-        .from("statuses")
-        .select("id, name, color")
-        .eq("category", "incoming_shipment")
-        .eq("active", true)
-        .is("deleted_at", null)
-        .order("sort_order"),
-      supabase
-        .from("incoming_shipments")
-        .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id)")
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false }),
+      clientsQuery,
+      productsQuery,
+      statusesQuery,
+      shipmentsQuery,
     ]);
 
     if (clientsResult.error) setError(clientsResult.error.message);
@@ -126,6 +140,7 @@ export function IncomingShipmentsClient() {
       setStatuses(loadedStatuses);
       setForm((current) => ({
         ...current,
+        client_id: isClientPortal && clientId ? clientId : current.client_id,
         status_id:
           current.status_id ||
           loadedStatuses.find((status) => status.name === "Expected")?.id ||
@@ -142,7 +157,13 @@ export function IncomingShipmentsClient() {
     }
 
     setLoading(false);
-  }
+  }, [clientId, isClientPortal]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void loadData(), 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [loadData]);
 
   function updateLine(index: number, line: ShipmentLine) {
     setForm((current) => ({
@@ -250,8 +271,12 @@ export function IncomingShipmentsClient() {
     <div className="space-y-5">
       <PageHeader
         eyebrow="Inbound"
-        title="Incoming Shipments"
-        description="Create inbound shipment records with manually entered product lines and expected quantities."
+        title={isClientPortal ? "My Incoming Shipments" : "Incoming Shipments"}
+        description={
+          isClientPortal
+            ? "Track your inbound shipments, expected boxes, tracking numbers, and receiving status."
+            : "Create inbound shipment records with manually entered product lines and expected quantities."
+        }
         action={<StatusBadge tone="blue">{shipments.length} shipments</StatusBadge>}
       />
       <ErrorBanner message={error} />
@@ -277,7 +302,11 @@ export function IncomingShipmentsClient() {
           ) : filteredShipments.length === 0 ? (
             <EmptyState
               title="No shipments match this view"
-              body="Try another status chip or create an inbound shipment to populate the receiving queue."
+              body={
+                isClientPortal
+                  ? "No shipments are visible for this status yet. Try another filter or add an inbound shipment."
+                  : "Try another status chip or create an inbound shipment to populate the receiving queue."
+              }
             />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
@@ -318,23 +347,25 @@ export function IncomingShipmentsClient() {
         </Panel>
 
         <div className="space-y-5">
-          <Panel title="Create incoming shipment">
+          <Panel title={isClientPortal ? "Create my incoming shipment" : "Create incoming shipment"}>
             <form className="space-y-4" onSubmit={(event) => void createShipment(event)}>
-            <Field label="Client">
-              <select
-                className={inputClassName}
-                required
-                value={form.client_id}
-                onChange={(event) => setForm({ ...form, client_id: event.target.value, lines: [emptyLine] })}
-              >
-                <option value="">Select client</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.company_name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {isClientPortal ? null : (
+              <Field label="Client">
+                <select
+                  className={inputClassName}
+                  required
+                  value={form.client_id}
+                  onChange={(event) => setForm({ ...form, client_id: event.target.value, lines: [emptyLine] })}
+                >
+                  <option value="">Select client</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.company_name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
               <Field label="Carrier">
                 <input className={inputClassName} required value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
