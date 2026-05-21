@@ -57,7 +57,7 @@ export function InventoryClient() {
   const loadInventory = useCallback(async () => {
     const query = supabase
       .from("inventory")
-      .select("*, clients(id, company_name), products(id, product_name, sku, fnsku, asin)")
+      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 

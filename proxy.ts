@@ -36,7 +36,7 @@ export function proxy(request: NextRequest) {
   }
 
   if (accessToken) {
-    const role = getRoleFromToken(accessToken);
+    const role = getRoleFromToken(decodeURIComponent(accessToken));
 
     if (
       role === "warehouse_operator" &&
@@ -65,7 +65,11 @@ function getRoleFromToken(token: string) {
     }
 
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = JSON.parse(globalThis.atob(normalized)) as {
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "=",
+    );
+    const decoded = JSON.parse(globalThis.atob(padded)) as {
       app_metadata?: { role?: string };
     };
 

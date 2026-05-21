@@ -159,7 +159,7 @@ export function WarehouseTasksClient() {
         .order("company_name"),
       supabase
         .from("inventory")
-        .select("*, clients(id, company_name), products(id, product_name, sku, fnsku, barcode, barcode_type)")
+        .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, barcode, barcode_type)")
         .is("deleted_at", null)
         .order("updated_at", { ascending: false }),
     ]);

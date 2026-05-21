@@ -173,7 +173,7 @@ export function RequestsClient() {
     const clientsQuery = supabase.from("clients").select("id, company_name").is("deleted_at", null).order("company_name");
     const inventoryQuery = supabase
       .from("inventory")
-      .select("*, clients(id, company_name), products(id, product_name, sku, fnsku)")
+      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
     const servicesQuery = supabase

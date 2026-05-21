@@ -110,13 +110,16 @@ function syncAuthCookies(session: Session | null) {
     return;
   }
 
+  const secureFlag = window.location.protocol === "https:" ? "; Secure" : "";
+  const baseCookieOptions = `path=/; SameSite=Lax${secureFlag}`;
+
   if (!session) {
-    document.cookie = `${AUTH_TOKEN_COOKIE}=; Max-Age=0; path=/; SameSite=Lax`;
-    document.cookie = `${AUTH_REFRESH_COOKIE}=; Max-Age=0; path=/; SameSite=Lax`;
+    document.cookie = `${AUTH_TOKEN_COOKIE}=; Max-Age=0; ${baseCookieOptions}`;
+    document.cookie = `${AUTH_REFRESH_COOKIE}=; Max-Age=0; ${baseCookieOptions}`;
     return;
   }
 
   const maxAge = Math.max(session.expires_in ?? 3600, 60);
-  document.cookie = `${AUTH_TOKEN_COOKIE}=${session.access_token}; Max-Age=${maxAge}; path=/; SameSite=Lax`;
-  document.cookie = `${AUTH_REFRESH_COOKIE}=${session.refresh_token}; Max-Age=2592000; path=/; SameSite=Lax`;
+  document.cookie = `${AUTH_TOKEN_COOKIE}=${encodeURIComponent(session.access_token)}; Max-Age=${maxAge}; ${baseCookieOptions}`;
+  document.cookie = `${AUTH_REFRESH_COOKIE}=${encodeURIComponent(session.refresh_token)}; Max-Age=2592000; ${baseCookieOptions}`;
 }

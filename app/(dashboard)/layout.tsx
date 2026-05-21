@@ -17,11 +17,12 @@ export default async function ProtectedDashboardLayout({
     redirect("/login");
   }
 
-  const supabase = createSupabaseServerClient(accessToken);
+  const decodedAccessToken = decodeURIComponent(accessToken);
+  const supabase = createSupabaseServerClient(decodedAccessToken);
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser(accessToken);
+  } = await supabase.auth.getUser(decodedAccessToken);
 
   if (error || !user) {
     redirect("/login");
