@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clientPortalRoutes, dashboardRoutes, type DashboardRoute } from "@/app/lib/dashboard";
@@ -39,9 +40,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </h1>
               </div>
               <div className="flex items-center gap-3">
-                <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600 sm:inline-flex">
-                  {isClientPortal ? "My workspace" : "Light workspace"}
-                </span>
                 <NotificationMenu />
                 <LogoutButton />
                 <div className="flex size-10 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
@@ -83,20 +81,17 @@ function SidebarContent({
 
   return (
     <div className="flex h-screen flex-col">
-      <div className="border-b border-slate-200 px-6 py-5">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-slate-950 text-sm font-semibold text-white">
-            SL
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-950">
-              {isClientPortal ? "Safir Portal" : "Safir WMS"}
-            </p>
-            <p className="text-xs text-slate-500">
-              {isClientPortal ? "Client workspace" : "Prep center operations"}
-            </p>
-          </div>
-        </div>
+      <div className="border-b border-slate-200 px-6 py-4">
+        <Link href="/" className="flex h-14 items-center">
+          <Image
+            src="/logosaflog.png"
+            alt="Safir Logistics"
+            width={198}
+            height={80}
+            priority
+            className="h-12 w-auto object-contain"
+          />
+        </Link>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
