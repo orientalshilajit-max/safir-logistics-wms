@@ -1,6 +1,5 @@
-import { DashboardPage } from "@/app/components/dashboard-page";
-import { getDashboardRoute } from "@/app/lib/dashboard";
+import { InvoicesClient } from "./invoices-client";
 
 export default function InvoicesPage() {
-  return <DashboardPage route={getDashboardRoute("/invoices")} />;
+  return <InvoicesClient />;
 }

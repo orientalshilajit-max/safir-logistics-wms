@@ -512,6 +512,13 @@ export function RequestsClient() {
                           >
                             Request changes
                           </Button>
+                          <Button
+                            type="button"
+                            disabled={!isAdmin}
+                            onClick={() => void updateRequestStatus(request, "Completed")}
+                          >
+                            Complete
+                          </Button>
                         </div>
                       </td>
                     </tr>

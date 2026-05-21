@@ -70,7 +70,7 @@ export const dashboardRoutes: DashboardRoute[] = [
     eyebrow: "Billing",
     title: "Invoices",
     description: "Prepare a clean billing workspace for client services, storage, and shipment fees.",
-    status: "Draft",
+    status: "Setup",
   },
   {
     href: "/clients",

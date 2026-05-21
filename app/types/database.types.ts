@@ -316,6 +316,187 @@ export type Database = {
           },
         ];
       };
+      invoice_items: {
+        Row: {
+          created_at: string;
+          deleted_at: string | null;
+          description: string;
+          id: string;
+          invoice_id: string;
+          item_type:
+            | "service"
+            | "storage_fee"
+            | "repack_fee"
+            | "custom_labor"
+            | "discount"
+            | "urgent_processing";
+          line_total: number;
+          quantity: number;
+          request_item_service_id: string | null;
+          service_request_id: string | null;
+          sort_order: number;
+          unit_price: number;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          deleted_at?: string | null;
+          description: string;
+          id?: string;
+          invoice_id: string;
+          item_type?:
+            | "service"
+            | "storage_fee"
+            | "repack_fee"
+            | "custom_labor"
+            | "discount"
+            | "urgent_processing";
+          line_total?: number;
+          quantity?: number;
+          request_item_service_id?: string | null;
+          service_request_id?: string | null;
+          sort_order?: number;
+          unit_price?: number;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          deleted_at?: string | null;
+          description?: string;
+          id?: string;
+          invoice_id?: string;
+          item_type?:
+            | "service"
+            | "storage_fee"
+            | "repack_fee"
+            | "custom_labor"
+            | "discount"
+            | "urgent_processing";
+          line_total?: number;
+          quantity?: number;
+          request_item_service_id?: string | null;
+          service_request_id?: string | null;
+          sort_order?: number;
+          unit_price?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "invoice_items_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "invoices";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "invoice_items_request_item_service_id_fkey";
+            columns: ["request_item_service_id"];
+            isOneToOne: false;
+            referencedRelation: "request_item_services";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "invoice_items_service_request_id_fkey";
+            columns: ["service_request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      invoices: {
+        Row: {
+          balance_due: number;
+          client_id: string;
+          created_at: string;
+          deleted_at: string | null;
+          discount_total: number;
+          due_date: string;
+          id: string;
+          invoice_number: string;
+          issue_date: string;
+          notes: string | null;
+          paid_amount: number;
+          service_request_id: string;
+          status:
+            | "Draft"
+            | "Sent"
+            | "Unpaid"
+            | "Partial Paid"
+            | "Paid"
+            | "Overdue"
+            | "Cancelled";
+          subtotal: number;
+          total_amount: number;
+          updated_at: string;
+        };
+        Insert: {
+          balance_due?: number;
+          client_id: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          discount_total?: number;
+          due_date?: string;
+          id?: string;
+          invoice_number?: string;
+          issue_date?: string;
+          notes?: string | null;
+          paid_amount?: number;
+          service_request_id: string;
+          status?:
+            | "Draft"
+            | "Sent"
+            | "Unpaid"
+            | "Partial Paid"
+            | "Paid"
+            | "Overdue"
+            | "Cancelled";
+          subtotal?: number;
+          total_amount?: number;
+          updated_at?: string;
+        };
+        Update: {
+          balance_due?: number;
+          client_id?: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          discount_total?: number;
+          due_date?: string;
+          id?: string;
+          invoice_number?: string;
+          issue_date?: string;
+          notes?: string | null;
+          paid_amount?: number;
+          service_request_id?: string;
+          status?:
+            | "Draft"
+            | "Sent"
+            | "Unpaid"
+            | "Partial Paid"
+            | "Paid"
+            | "Overdue"
+            | "Cancelled";
+          subtotal?: number;
+          total_amount?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "invoices_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "invoices_service_request_id_fkey";
+            columns: ["service_request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       inventory: {
         Row: {
           available_qty: number;
@@ -871,6 +1052,14 @@ export type Database = {
       is_wms_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      generate_invoice_for_service_request: {
+        Args: { p_request_id: string };
+        Returns: string;
+      };
+      recalculate_invoice_totals: {
+        Args: { p_invoice_id: string };
+        Returns: undefined;
       };
       submit_service_request: {
         Args: { p_request_id: string };
