@@ -211,6 +211,7 @@ export function ClientsClient() {
     });
     const body = (await response.json()) as {
       message?: string;
+      detail?: string;
       error?: string;
       instructions?: string[];
       rate_limited?: boolean;
@@ -222,11 +223,11 @@ export function ClientsClient() {
     } else {
       setOnboardingMessage(
         body.rate_limited
-          ? "Email limit reached. Please wait a few minutes before sending another invite."
+          ? "Email rate limit reached"
           : body.message ??
           (action === "resend"
-            ? "Invitation link resent."
-            : `Invitation sent to ${client.email}.`),
+            ? "Invite resent"
+            : "Invite sent"),
       );
       await loadClients();
     }

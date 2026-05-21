@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { User } from "@supabase/supabase-js";
 import {
   createSupabaseAdminClient,
   createSupabaseServerClient,
@@ -7,6 +8,8 @@ import {
 const PRODUCTION_REDIRECT_URL = "https://app.safir-logistics.com";
 const RATE_LIMIT_MESSAGE =
   "Email limit reached. Please wait a few minutes before sending another invite.";
+const ADMIN_RATE_LIMIT_MESSAGE = "Email rate limit reached";
+const EMAIL_SEND_FAILED_MESSAGE = "Supabase email send failed";
 
 type ClientRow = {
   id: string;
@@ -68,7 +71,33 @@ export async function POST(
   }
 
   const typedClient = client as ClientRow;
-  const existingUser = await findAuthUserForClient(typedClient, adminClient);
+  let existingUser: User | null;
+
+  try {
+    existingUser = await findAuthUserForClient(typedClient, adminClient);
+  } catch (authLookupError) {
+    logAuthError("lookup auth user", authLookupError, typedClient);
+    return NextResponse.json(
+      {
+        error: "Supabase auth lookup failed",
+        instructions: manualInstructions(typedClient.id, typedClient),
+      },
+      { status: 400 },
+    );
+  }
+
+  if (
+    existingUser?.email_confirmed_at &&
+    typedClient.login_status === "active" &&
+    body.action !== "resend"
+  ) {
+    return NextResponse.json({
+      message: "User already active",
+      auth_user_id: existingUser.id,
+      login_status: "active",
+    });
+  }
+
   const { user: invitedUser, error: inviteError } = existingUser
     ? { user: null, error: null }
     : await inviteNewUser(typedClient, adminClient);
@@ -77,15 +106,19 @@ export async function POST(
 
   if (inviteError) {
     if (isEmailRateLimitError(inviteError.message)) {
+      logAuthError("invite email rate limit", inviteError, typedClient);
       return NextResponse.json({
-        message: RATE_LIMIT_MESSAGE,
+        message: ADMIN_RATE_LIMIT_MESSAGE,
+        detail: RATE_LIMIT_MESSAGE,
         rate_limited: true,
       });
     }
 
+    logAuthError("invite email send", inviteError, typedClient);
     return NextResponse.json(
       {
-        error: inviteError.message,
+        error: EMAIL_SEND_FAILED_MESSAGE,
+        detail: inviteError.message,
         instructions: manualInstructions(typedClient.id, typedClient),
       },
       { status: 400 },
@@ -118,6 +151,7 @@ export async function POST(
     });
 
   if (metadataError || !updatedUserData.user) {
+    logAuthError("update auth metadata", metadataError, typedClient);
     return NextResponse.json(
       {
         error: metadataError?.message ?? "Unable to update client auth metadata.",
@@ -131,21 +165,25 @@ export async function POST(
     const { error: resetError } = await adminClient.auth.resetPasswordForEmail(
       typedClient.email,
       {
-        redirectTo: PRODUCTION_REDIRECT_URL,
+        redirectTo: getEmailRedirectUrl(),
       },
     );
 
     if (resetError) {
       if (isEmailRateLimitError(resetError.message)) {
+        logAuthError("recovery email rate limit", resetError, typedClient);
         return NextResponse.json({
-          message: RATE_LIMIT_MESSAGE,
+          message: ADMIN_RATE_LIMIT_MESSAGE,
+          detail: RATE_LIMIT_MESSAGE,
           rate_limited: true,
         });
       }
 
+      logAuthError("recovery email send", resetError, typedClient);
       return NextResponse.json(
         {
-          error: resetError.message,
+          error: EMAIL_SEND_FAILED_MESSAGE,
+          detail: resetError.message,
           instructions: existingUser.email_confirmed_at
             ? passwordResetInstructions(typedClient)
             : unconfirmedUserInstructions(typedClient, existingUser.id),
@@ -174,9 +212,7 @@ export async function POST(
   }
 
   return NextResponse.json({
-    message: isResend
-      ? "Invitation link resent."
-      : `Invitation sent to ${typedClient.email}.`,
+    message: isResend ? "Invite resent" : "Invite sent",
     auth_user_id: updatedUserData.user.id,
     login_status: nextLoginStatus(typedClient, updatedUserData.user),
   });
@@ -206,11 +242,28 @@ async function inviteNewUser(
         contact_name: client.contact_name,
         client_id: client.id,
       },
-      redirectTo: PRODUCTION_REDIRECT_URL,
+      redirectTo: getEmailRedirectUrl(),
     },
   );
 
   return { user: data.user, error };
+}
+
+function getEmailRedirectUrl() {
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:3000";
+  }
+
+  return PRODUCTION_REDIRECT_URL;
+}
+
+function logAuthError(action: string, error: unknown, client?: ClientRow) {
+  console.error("[client-invite]", {
+    action,
+    client_id: client?.id,
+    email: client?.email,
+    error,
+  });
 }
 
 async function findAuthUserForClient(
