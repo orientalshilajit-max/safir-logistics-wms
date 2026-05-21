@@ -560,6 +560,53 @@ export type Database = {
           },
         ];
       };
+      notifications: {
+        Row: {
+          body: string | null;
+          client_id: string | null;
+          created_at: string;
+          deleted_at: string | null;
+          entity_id: string;
+          entity_type: string;
+          id: string;
+          metadata: Json;
+          notification_type: string;
+          title: string;
+        };
+        Insert: {
+          body?: string | null;
+          client_id?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          entity_id: string;
+          entity_type: string;
+          id?: string;
+          metadata?: Json;
+          notification_type: string;
+          title: string;
+        };
+        Update: {
+          body?: string | null;
+          client_id?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          entity_id?: string;
+          entity_type?: string;
+          id?: string;
+          metadata?: Json;
+          notification_type?: string;
+          title?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "notifications_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       products: {
         Row: {
           active: boolean;
@@ -1042,6 +1089,38 @@ export type Database = {
         };
         Relationships: [];
       };
+      user_notifications: {
+        Row: {
+          created_at: string;
+          id: string;
+          notification_id: string;
+          read_at: string | null;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          notification_id: string;
+          read_at?: string | null;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          notification_id?: string;
+          read_at?: string | null;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "user_notifications_notification_id_fkey";
+            columns: ["notification_id"];
+            isOneToOne: false;
+            referencedRelation: "notifications";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -1052,6 +1131,10 @@ export type Database = {
       is_wms_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      mark_overdue_invoices: {
+        Args: Record<PropertyKey, never>;
+        Returns: number;
       };
       generate_invoice_for_service_request: {
         Args: { p_request_id: string };

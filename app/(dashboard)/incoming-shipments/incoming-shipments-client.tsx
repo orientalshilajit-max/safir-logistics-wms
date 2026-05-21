@@ -14,6 +14,7 @@ import {
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
+import { ActivityTimeline } from "@/app/components/activity-timeline";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "client_id" | "product_name" | "sku">;
@@ -61,6 +62,7 @@ export function IncomingShipmentsClient() {
   const [products, setProducts] = useState<Product[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,7 +125,11 @@ export function IncomingShipmentsClient() {
     }
 
     if (shipmentsResult.error) setError(shipmentsResult.error.message);
-    else setShipments((shipmentsResult.data ?? []) as Shipment[]);
+    else {
+      const loadedShipments = (shipmentsResult.data ?? []) as Shipment[];
+      setShipments(loadedShipments);
+      setSelectedShipmentId((current) => current ?? loadedShipments[0]?.id ?? null);
+    }
 
     setLoading(false);
   }
@@ -238,7 +244,11 @@ export function IncomingShipmentsClient() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {shipments.map((shipment) => (
-                    <tr key={shipment.id} className="hover:bg-slate-50">
+                    <tr
+                      key={shipment.id}
+                      className="cursor-pointer hover:bg-slate-50"
+                      onClick={() => setSelectedShipmentId(shipment.id)}
+                    >
                       <td className="px-4 py-3 font-medium text-slate-950">{shipment.carrier}</td>
                       <td className="px-4 py-3 text-slate-600">{shipment.clients?.company_name ?? "Unknown"}</td>
                       <td className="px-4 py-3 text-slate-600">{shipment.tracking_numbers.join(", ") || "-"}</td>
@@ -257,8 +267,9 @@ export function IncomingShipmentsClient() {
           )}
         </Panel>
 
-        <Panel title="Create incoming shipment">
-          <form className="space-y-4" onSubmit={(event) => void createShipment(event)}>
+        <div className="space-y-5">
+          <Panel title="Create incoming shipment">
+            <form className="space-y-4" onSubmit={(event) => void createShipment(event)}>
             <Field label="Client">
               <select
                 className={inputClassName}
@@ -365,11 +376,17 @@ export function IncomingShipmentsClient() {
               ))}
             </div>
 
-            <Button type="submit" disabled={saving || clients.length === 0 || statuses.length === 0}>
-              {saving ? "Creating..." : "Create shipment"}
-            </Button>
-          </form>
-        </Panel>
+              <Button type="submit" disabled={saving || clients.length === 0 || statuses.length === 0}>
+                {saving ? "Creating..." : "Create shipment"}
+              </Button>
+            </form>
+          </Panel>
+          <ActivityTimeline
+            entityType="incoming_shipments"
+            entityId={selectedShipmentId}
+            title="Shipment activity"
+          />
+        </div>
       </div>
     </div>
   );

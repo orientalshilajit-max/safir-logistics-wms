@@ -16,6 +16,7 @@ import {
   textAreaClassName,
 } from "@/app/components/wms-ui";
 import { formatMoney } from "../services/services-client";
+import { ActivityTimeline } from "@/app/components/activity-timeline";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type ServiceRequest = Pick<Tables<"service_requests">, "id" | "request_number">;
@@ -100,6 +101,7 @@ export function InvoicesClient() {
 
   const loadInvoices = useCallback(async () => {
     setError(null);
+    await supabase.rpc("mark_overdue_invoices");
     const { data, error: loadError } = await supabase
       .from("invoices")
       .select(
@@ -466,6 +468,11 @@ export function InvoicesClient() {
                   {saving ? "Adding..." : "Add line item"}
                 </Button>
               </form>
+              <ActivityTimeline
+                entityType="invoices"
+                entityId={selectedInvoice.id}
+                title="Invoice activity"
+              />
             </div>
           )}
         </Panel>

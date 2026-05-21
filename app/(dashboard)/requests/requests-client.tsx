@@ -16,6 +16,7 @@ import {
   textAreaClassName,
 } from "@/app/components/wms-ui";
 import { formatMoney, formatPricingType } from "../services/services-client";
+import { ActivityTimeline } from "@/app/components/activity-timeline";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku">;
@@ -110,6 +111,7 @@ export function RequestsClient() {
   const [services, setServices] = useState<Service[]>([]);
   const [overrides, setOverrides] = useState<Override[]>([]);
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [form, setForm] = useState<RequestForm>(() => emptyForm());
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -187,7 +189,11 @@ export function RequestsClient() {
     else setOverrides(overridesResult.data ?? []);
 
     if (requestsResult.error) setError(requestsResult.error.message);
-    else setRequests((requestsResult.data ?? []) as ServiceRequest[]);
+    else {
+      const loadedRequests = (requestsResult.data ?? []) as ServiceRequest[];
+      setRequests(loadedRequests);
+      setSelectedRequestId((current) => current ?? loadedRequests[0]?.id ?? null);
+    }
 
     if (!isAdmin && clientId) {
       setForm((current) => ({ ...current, client_id: clientId }));
@@ -471,7 +477,11 @@ export function RequestsClient() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredRequests.map((request) => (
-                    <tr key={request.id} className="hover:bg-slate-50">
+                    <tr
+                      key={request.id}
+                      className="cursor-pointer hover:bg-slate-50"
+                      onClick={() => setSelectedRequestId(request.id)}
+                    >
                       <td className="px-4 py-3 font-medium text-slate-950">
                         {request.request_number}
                       </td>
@@ -529,8 +539,9 @@ export function RequestsClient() {
           )}
         </Panel>
 
-        <Panel title="Create request" description="Quantities are reserved from available inventory when submitted.">
-          <form className="space-y-5" onSubmit={(event) => void createAndSubmitRequest(event)}>
+        <div className="space-y-5">
+          <Panel title="Create request" description="Quantities are reserved from available inventory when submitted.">
+            <form className="space-y-5" onSubmit={(event) => void createAndSubmitRequest(event)}>
             {isAdmin ? (
               <Field label="Client">
                 <select
@@ -745,11 +756,17 @@ export function RequestsClient() {
               </p>
             </div>
 
-            <Button type="submit" disabled={saving || !selectedClientId}>
-              {saving ? "Submitting..." : "Create and submit request"}
-            </Button>
-          </form>
-        </Panel>
+              <Button type="submit" disabled={saving || !selectedClientId}>
+                {saving ? "Submitting..." : "Create and submit request"}
+              </Button>
+            </form>
+          </Panel>
+          <ActivityTimeline
+            entityType="service_requests"
+            entityId={selectedRequestId}
+            title="Request activity"
+          />
+        </div>
       </div>
     </div>
   );

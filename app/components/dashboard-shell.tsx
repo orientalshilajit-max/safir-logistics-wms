@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { dashboardRoutes } from "@/app/lib/dashboard";
 import { LogoutButton } from "@/app/components/logout-button";
+import { NotificationMenu } from "@/app/components/notification-menu";
 
 const statusStyles = {
   Live: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -36,6 +37,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600 sm:inline-flex">
                   Light workspace
                 </span>
+                <NotificationMenu />
                 <LogoutButton />
                 <div className="flex size-10 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
                   SL
