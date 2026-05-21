@@ -5,6 +5,8 @@ import {
 } from "@/app/lib/supabase-server";
 
 const PRODUCTION_REDIRECT_URL = "https://app.safir-logistics.com";
+const RATE_LIMIT_MESSAGE =
+  "Email limit reached. Please wait a few minutes before sending another invite.";
 
 type ClientRow = {
   id: string;
@@ -74,6 +76,13 @@ export async function POST(
   const isResend = body.action === "resend" || Boolean(existingUser);
 
   if (inviteError) {
+    if (isEmailRateLimitError(inviteError.message)) {
+      return NextResponse.json({
+        message: RATE_LIMIT_MESSAGE,
+        rate_limited: true,
+      });
+    }
+
     return NextResponse.json(
       {
         error: inviteError.message,
@@ -127,6 +136,13 @@ export async function POST(
     );
 
     if (resetError) {
+      if (isEmailRateLimitError(resetError.message)) {
+        return NextResponse.json({
+          message: RATE_LIMIT_MESSAGE,
+          rate_limited: true,
+        });
+      }
+
       return NextResponse.json(
         {
           error: resetError.message,
@@ -164,6 +180,18 @@ export async function POST(
     auth_user_id: updatedUserData.user.id,
     login_status: nextLoginStatus(typedClient, updatedUserData.user),
   });
+}
+
+function isEmailRateLimitError(message: string) {
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("rate limit") ||
+    normalized.includes("rate_limit") ||
+    normalized.includes("email rate") ||
+    normalized.includes("email limit") ||
+    normalized.includes("too many")
+  );
 }
 
 async function inviteNewUser(

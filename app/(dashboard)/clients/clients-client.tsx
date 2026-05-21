@@ -40,6 +40,8 @@ const emptyForm: ClientForm = {
   notes: "",
 };
 
+const inviteCooldownMs = 60_000;
+
 export function ClientsClient() {
   const { session } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
@@ -48,6 +50,8 @@ export function ClientsClient() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creatingAccessId, setCreatingAccessId] = useState<string | null>(null);
+  const [inviteCooldowns, setInviteCooldowns] = useState<Record<string, number>>({});
+  const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
   const [onboardingInstructions, setOnboardingInstructions] = useState<string[]>([]);
@@ -56,6 +60,12 @@ export function ClientsClient() {
     () => clients.filter((client) => client.status === "active").length,
     [clients],
   );
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -173,7 +183,20 @@ export function ClientsClient() {
       return;
     }
 
+    const cooldownRemaining = getInviteCooldownSeconds(client.id, inviteCooldowns, now);
+
+    if (cooldownRemaining > 0) {
+      setOnboardingMessage(
+        `Please wait ${cooldownRemaining} seconds before sending another invite.`,
+      );
+      return;
+    }
+
     setCreatingAccessId(client.id);
+    setInviteCooldowns((current) => ({
+      ...current,
+      [client.id]: Date.now() + inviteCooldownMs,
+    }));
     setError(null);
     setOnboardingMessage(null);
     setOnboardingInstructions([]);
@@ -190,6 +213,7 @@ export function ClientsClient() {
       message?: string;
       error?: string;
       instructions?: string[];
+      rate_limited?: boolean;
     };
 
     if (!response.ok) {
@@ -197,7 +221,9 @@ export function ClientsClient() {
       setOnboardingInstructions(body.instructions ?? manualOnboardingInstructions(client));
     } else {
       setOnboardingMessage(
-        body.message ??
+        body.rate_limited
+          ? "Email limit reached. Please wait a few minutes before sending another invite."
+          : body.message ??
           (action === "resend"
             ? "Invitation link resent."
             : `Invitation sent to ${client.email}.`),
@@ -259,23 +285,25 @@ export function ClientsClient() {
                             Edit
                           </Button>
                           {client.login_status === "no login" ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={creatingAccessId === client.id}
+                            <InviteButton
+                              clientId={client.id}
+                              cooldowns={inviteCooldowns}
+                              label="Create Login Access"
+                              loadingLabel="Creating..."
+                              loading={creatingAccessId === client.id}
+                              now={now}
                               onClick={() => void createLoginAccess(client)}
-                            >
-                              {creatingAccessId === client.id ? "Creating..." : "Create Login Access"}
-                            </Button>
+                            />
                           ) : (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={creatingAccessId === client.id}
+                            <InviteButton
+                              clientId={client.id}
+                              cooldowns={inviteCooldowns}
+                              label="Resend Invite"
+                              loadingLabel="Sending..."
+                              loading={creatingAccessId === client.id}
+                              now={now}
                               onClick={() => void createLoginAccess(client, "resend")}
-                            >
-                              {creatingAccessId === client.id ? "Sending..." : "Resend Invite"}
-                            </Button>
+                            />
                           )}
                           <Button type="button" variant="danger" onClick={() => void deleteClient(client)}>
                             Delete
@@ -390,24 +418,26 @@ export function ClientsClient() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {editing.login_status === "no login" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={creatingAccessId === editing.id}
+                    <InviteButton
+                      clientId={editing.id}
+                      cooldowns={inviteCooldowns}
+                      label="Create Login Access"
+                      loadingLabel="Creating..."
+                      loading={creatingAccessId === editing.id}
+                      now={now}
                       onClick={() => void createLoginAccess(editing)}
-                    >
-                      {creatingAccessId === editing.id ? "Creating..." : "Create Login Access"}
-                    </Button>
+                    />
                   ) : null}
                   {editing.login_status === "invited" || editing.login_status === "active" ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={creatingAccessId === editing.id}
+                    <InviteButton
+                      clientId={editing.id}
+                      cooldowns={inviteCooldowns}
+                      label="Resend Invite"
+                      loadingLabel="Sending..."
+                      loading={creatingAccessId === editing.id}
+                      now={now}
                       onClick={() => void createLoginAccess(editing, "resend")}
-                    >
-                      {creatingAccessId === editing.id ? "Sending..." : "Resend Invite"}
-                    </Button>
+                    />
                   ) : null}
                 </div>
               </div>
@@ -438,6 +468,49 @@ export function ClientsClient() {
       ) : null}
     </div>
   );
+}
+
+function InviteButton({
+  clientId,
+  cooldowns,
+  label,
+  loadingLabel,
+  loading,
+  now,
+  onClick,
+}: {
+  clientId: string;
+  cooldowns: Record<string, number>;
+  label: string;
+  loadingLabel: string;
+  loading: boolean;
+  now: number;
+  onClick: () => void;
+}) {
+  const cooldownSeconds = getInviteCooldownSeconds(clientId, cooldowns, now);
+
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      disabled={loading || cooldownSeconds > 0}
+      onClick={onClick}
+    >
+      {loading
+        ? loadingLabel
+        : cooldownSeconds > 0
+          ? `${cooldownSeconds}s`
+          : label}
+    </Button>
+  );
+}
+
+function getInviteCooldownSeconds(
+  clientId: string,
+  cooldowns: Record<string, number>,
+  now: number,
+) {
+  return Math.max(0, Math.ceil(((cooldowns[clientId] ?? 0) - now) / 1000));
 }
 
 function loginStatusTone(status: Client["login_status"]) {
