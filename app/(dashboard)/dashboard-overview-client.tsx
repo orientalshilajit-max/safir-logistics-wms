@@ -81,19 +81,17 @@ export function DashboardOverviewClient() {
       <ErrorBanner message={error} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Clients" value={overview.clients} loading={loading} source="public.clients" />
-        <Metric label="Products" value={overview.products} loading={loading} source="public.products" />
+        <Metric label="Clients" value={overview.clients} loading={loading} />
+        <Metric label="Products" value={overview.products} loading={loading} />
         <Metric
           label="Incoming Shipments"
           value={overview.incomingShipments}
           loading={loading}
-          source="public.incoming_shipments"
         />
         <Metric
           label="Inventory"
           value={overview.inventoryAvailable}
           loading={loading}
-          source="sum inventory.available_qty"
         />
       </section>
 
@@ -121,12 +119,10 @@ function Metric({
   label,
   value,
   loading,
-  source,
 }: {
   label: string;
   value: number;
   loading: boolean;
-  source: string;
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -134,10 +130,9 @@ function Metric({
         <p className="text-sm font-medium text-slate-500">{label}</p>
         <StatusBadge tone="emerald">Live</StatusBadge>
       </div>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+      <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-950">
         {loading ? "..." : value}
       </p>
-      <p className="mt-2 text-xs font-medium text-slate-400">{source}</p>
     </div>
   );
 }
@@ -149,8 +144,7 @@ function PlaceholderMetric({ label }: { label: string }) {
         <p className="text-sm font-medium text-slate-500">{label}</p>
         <StatusBadge>Placeholder</StatusBadge>
       </div>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-400">--</p>
-      <p className="mt-2 text-xs font-medium text-slate-400">Not wired in Phase 1</p>
+      <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-400">--</p>
     </div>
   );
 }

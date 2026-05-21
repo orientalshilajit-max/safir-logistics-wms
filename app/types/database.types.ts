@@ -432,6 +432,333 @@ export type Database = {
           },
         ];
       };
+      request_box_items: {
+        Row: {
+          created_at: string;
+          deleted_at: string | null;
+          id: string;
+          product_id: string;
+          quantity: number;
+          request_box_id: string;
+          request_item_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          product_id: string;
+          quantity: number;
+          request_box_id: string;
+          request_item_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          product_id?: string;
+          quantity?: number;
+          request_box_id?: string;
+          request_item_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "request_box_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "request_box_items_request_box_id_fkey";
+            columns: ["request_box_id"];
+            isOneToOne: false;
+            referencedRelation: "request_boxes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "request_box_items_request_item_id_fkey";
+            columns: ["request_item_id"];
+            isOneToOne: false;
+            referencedRelation: "request_items";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      request_boxes: {
+        Row: {
+          box_number: number;
+          created_at: string;
+          deleted_at: string | null;
+          id: string;
+          request_id: string;
+          tracking_number: string | null;
+          updated_at: string;
+          uploaded_label_url: string | null;
+        };
+        Insert: {
+          box_number: number;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          request_id: string;
+          tracking_number?: string | null;
+          updated_at?: string;
+          uploaded_label_url?: string | null;
+        };
+        Update: {
+          box_number?: number;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          request_id?: string;
+          tracking_number?: string | null;
+          updated_at?: string;
+          uploaded_label_url?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "request_boxes_request_id_fkey";
+            columns: ["request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      request_item_services: {
+        Row: {
+          created_at: string;
+          deleted_at: string | null;
+          estimated_total: number;
+          id: string;
+          pricing_type: string;
+          quantity_basis: number;
+          request_item_id: string;
+          service_id: string;
+          unit_price: number;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          deleted_at?: string | null;
+          estimated_total?: number;
+          id?: string;
+          pricing_type: string;
+          quantity_basis?: number;
+          request_item_id: string;
+          service_id: string;
+          unit_price: number;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          deleted_at?: string | null;
+          estimated_total?: number;
+          id?: string;
+          pricing_type?: string;
+          quantity_basis?: number;
+          request_item_id?: string;
+          service_id?: string;
+          unit_price?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "request_item_services_request_item_id_fkey";
+            columns: ["request_item_id"];
+            isOneToOne: false;
+            referencedRelation: "request_items";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "request_item_services_service_id_fkey";
+            columns: ["service_id"];
+            isOneToOne: false;
+            referencedRelation: "services";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      request_items: {
+        Row: {
+          created_at: string;
+          deleted_at: string | null;
+          fnsku: string | null;
+          id: string;
+          inventory_id: string;
+          notes: string | null;
+          product_id: string;
+          requested_quantity: number;
+          request_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          deleted_at?: string | null;
+          fnsku?: string | null;
+          id?: string;
+          inventory_id: string;
+          notes?: string | null;
+          product_id: string;
+          requested_quantity: number;
+          request_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          deleted_at?: string | null;
+          fnsku?: string | null;
+          id?: string;
+          inventory_id?: string;
+          notes?: string | null;
+          product_id?: string;
+          requested_quantity?: number;
+          request_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "request_items_inventory_id_fkey";
+            columns: ["inventory_id"];
+            isOneToOne: false;
+            referencedRelation: "inventory";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "request_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "request_items_request_id_fkey";
+            columns: ["request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      service_requests: {
+        Row: {
+          admin_notes: string | null;
+          approved_at: string | null;
+          box_count: number;
+          carrier: string | null;
+          client_id: string;
+          created_at: string;
+          created_by: string | null;
+          deleted_at: string | null;
+          estimated_total: number;
+          id: string;
+          notes: string | null;
+          rejected_at: string | null;
+          request_number: string;
+          shipping_label_urls: string[];
+          status:
+            | "Draft"
+            | "Submitted"
+            | "Pending Approval"
+            | "Approved"
+            | "Rejected"
+            | "Waiting Labels"
+            | "Ready for Prep"
+            | "Prep in Progress"
+            | "QC Check"
+            | "Packing"
+            | "Ready to Ship"
+            | "Shipped"
+            | "Completed"
+            | "On Hold"
+            | "Need Client Action";
+          submitted_at: string | null;
+          tracking_numbers: string[];
+          updated_at: string;
+        };
+        Insert: {
+          admin_notes?: string | null;
+          approved_at?: string | null;
+          box_count?: number;
+          carrier?: string | null;
+          client_id: string;
+          created_at?: string;
+          created_by?: string | null;
+          deleted_at?: string | null;
+          estimated_total?: number;
+          id?: string;
+          notes?: string | null;
+          rejected_at?: string | null;
+          request_number?: string;
+          shipping_label_urls?: string[];
+          status?:
+            | "Draft"
+            | "Submitted"
+            | "Pending Approval"
+            | "Approved"
+            | "Rejected"
+            | "Waiting Labels"
+            | "Ready for Prep"
+            | "Prep in Progress"
+            | "QC Check"
+            | "Packing"
+            | "Ready to Ship"
+            | "Shipped"
+            | "Completed"
+            | "On Hold"
+            | "Need Client Action";
+          submitted_at?: string | null;
+          tracking_numbers?: string[];
+          updated_at?: string;
+        };
+        Update: {
+          admin_notes?: string | null;
+          approved_at?: string | null;
+          box_count?: number;
+          carrier?: string | null;
+          client_id?: string;
+          created_at?: string;
+          created_by?: string | null;
+          deleted_at?: string | null;
+          estimated_total?: number;
+          id?: string;
+          notes?: string | null;
+          rejected_at?: string | null;
+          request_number?: string;
+          shipping_label_urls?: string[];
+          status?:
+            | "Draft"
+            | "Submitted"
+            | "Pending Approval"
+            | "Approved"
+            | "Rejected"
+            | "Waiting Labels"
+            | "Ready for Prep"
+            | "Prep in Progress"
+            | "QC Check"
+            | "Packing"
+            | "Ready to Ship"
+            | "Shipped"
+            | "Completed"
+            | "On Hold"
+            | "Need Client Action";
+          submitted_at?: string | null;
+          tracking_numbers?: string[];
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "service_requests_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       services: {
         Row: {
           active: boolean;
@@ -544,6 +871,10 @@ export type Database = {
       is_wms_admin: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
+      };
+      submit_service_request: {
+        Args: { p_request_id: string };
+        Returns: undefined;
       };
       set_updated_at: {
         Args: Record<PropertyKey, never>;
