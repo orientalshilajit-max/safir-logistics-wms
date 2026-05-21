@@ -4,11 +4,15 @@ import {
   createSupabaseServerClient,
 } from "@/app/lib/supabase-server";
 
+const PRODUCTION_REDIRECT_URL = "https://app.safir-logistics.com";
+
 type ClientRow = {
   id: string;
+  auth_user_id: string | null;
   company_name: string;
   contact_name: string;
   email: string;
+  login_status: "no login" | "invited" | "active";
 };
 
 export async function POST(
@@ -32,6 +36,9 @@ export async function POST(
   }
 
   const { clientId } = await context.params;
+  const body = (await request.json().catch(() => ({}))) as {
+    action?: "create" | "resend";
+  };
   const adminClient = createSupabaseAdminClient();
 
   if (!adminClient) {
@@ -46,7 +53,7 @@ export async function POST(
 
   const { data: client, error: clientError } = await adminClient
     .from("clients")
-    .select("id, company_name, contact_name, email")
+    .select("id, auth_user_id, company_name, contact_name, email, login_status")
     .eq("id", clientId)
     .is("deleted_at", null)
     .single();
@@ -59,56 +66,84 @@ export async function POST(
   }
 
   const typedClient = client as ClientRow;
-  const { data: inviteData, error: inviteError } =
-    await adminClient.auth.admin.inviteUserByEmail(typedClient.email, {
-      data: {
-        company_name: typedClient.company_name,
-        contact_name: typedClient.contact_name,
-      },
-    });
+  const existingUser = await findAuthUserForClient(typedClient, adminClient);
+  const { user: invitedUser, error: inviteError } = existingUser
+    ? { user: null, error: null }
+    : await inviteNewUser(typedClient, adminClient);
+  const authUser = existingUser ?? invitedUser;
+  const isResend = body.action === "resend" || Boolean(existingUser);
 
-  if (inviteError || !inviteData.user) {
+  if (inviteError) {
     return NextResponse.json(
       {
-        error: inviteError?.message ?? "Unable to invite Supabase Auth user.",
+        error: inviteError.message,
         instructions: manualInstructions(typedClient.id, typedClient),
       },
       { status: 400 },
     );
   }
 
-  const { error: metadataError } = await adminClient.auth.admin.updateUserById(
-    inviteData.user.id,
-    {
-      app_metadata: {
-        ...(inviteData.user.app_metadata ?? {}),
-        role: "client",
-        client_id: typedClient.id,
-      },
-      user_metadata: {
-        ...(inviteData.user.user_metadata ?? {}),
-        company_name: typedClient.company_name,
-        contact_name: typedClient.contact_name,
-        client_id: typedClient.id,
-      },
-    },
-  );
-
-  if (metadataError) {
+  if (!authUser) {
     return NextResponse.json(
       {
-        error: metadataError.message,
-        instructions: manualInstructions(typedClient.id, typedClient, inviteData.user.id),
+        error: "Unable to create or locate Supabase Auth user.",
+        instructions: manualInstructions(typedClient.id, typedClient),
       },
       { status: 400 },
     );
   }
 
+  const { data: updatedUserData, error: metadataError } =
+    await adminClient.auth.admin.updateUserById(authUser.id, {
+      app_metadata: {
+        ...(authUser.app_metadata ?? {}),
+        role: "client",
+        client_id: typedClient.id,
+      },
+      user_metadata: {
+        ...(authUser.user_metadata ?? {}),
+        company_name: typedClient.company_name,
+        contact_name: typedClient.contact_name,
+        client_id: typedClient.id,
+      },
+    });
+
+  if (metadataError || !updatedUserData.user) {
+    return NextResponse.json(
+      {
+        error: metadataError?.message ?? "Unable to update client auth metadata.",
+        instructions: manualInstructions(typedClient.id, typedClient, authUser.id),
+      },
+      { status: 400 },
+    );
+  }
+
+  if (existingUser) {
+    const { error: resetError } = await adminClient.auth.resetPasswordForEmail(
+      typedClient.email,
+      {
+        redirectTo: PRODUCTION_REDIRECT_URL,
+      },
+    );
+
+    if (resetError) {
+      return NextResponse.json(
+        {
+          error: resetError.message,
+          instructions: existingUser.email_confirmed_at
+            ? passwordResetInstructions(typedClient)
+            : unconfirmedUserInstructions(typedClient, existingUser.id),
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const { error: updateError } = await adminClient
     .from("clients")
     .update({
-      auth_user_id: inviteData.user.id,
-      login_status: "invited",
+      auth_user_id: updatedUserData.user.id,
+      login_status: nextLoginStatus(typedClient, updatedUserData.user),
     })
     .eq("id", typedClient.id);
 
@@ -116,17 +151,82 @@ export async function POST(
     return NextResponse.json(
       {
         error: updateError.message,
-        instructions: manualInstructions(typedClient.id, typedClient, inviteData.user.id),
+        instructions: manualInstructions(typedClient.id, typedClient, updatedUserData.user.id),
       },
       { status: 400 },
     );
   }
 
   return NextResponse.json({
-    message: `Invitation sent to ${typedClient.email}.`,
-    auth_user_id: inviteData.user.id,
-    login_status: "invited",
+    message: isResend
+      ? "Invitation link resent."
+      : `Invitation sent to ${typedClient.email}.`,
+    auth_user_id: updatedUserData.user.id,
+    login_status: nextLoginStatus(typedClient, updatedUserData.user),
   });
+}
+
+async function inviteNewUser(
+  client: ClientRow,
+  adminClient: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+) {
+  const { data, error } = await adminClient.auth.admin.inviteUserByEmail(
+    client.email,
+    {
+      data: {
+        company_name: client.company_name,
+        contact_name: client.contact_name,
+        client_id: client.id,
+      },
+      redirectTo: PRODUCTION_REDIRECT_URL,
+    },
+  );
+
+  return { user: data.user, error };
+}
+
+async function findAuthUserForClient(
+  client: ClientRow,
+  adminClient: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+) {
+  if (client.auth_user_id) {
+    const { data, error } = await adminClient.auth.admin.getUserById(client.auth_user_id);
+
+    if (!error && data.user) {
+      return data.user;
+    }
+  }
+
+  const normalizedEmail = client.email.trim().toLowerCase();
+  let page = 1;
+  const perPage = 1000;
+
+  while (page <= 20) {
+    const { data, error } = await adminClient.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const match = data.users.find(
+      (user) => user.email?.trim().toLowerCase() === normalizedEmail,
+    );
+
+    if (match) {
+      return match;
+    }
+
+    if (data.users.length < perPage) {
+      return null;
+    }
+
+    page += 1;
+  }
+
+  return null;
 }
 
 function getBearerToken(request: NextRequest) {
@@ -149,5 +249,30 @@ function manualInstructions(clientId: string, client?: ClientRow, authUserId?: s
     authUserId
       ? `4. Update public.clients.auth_user_id to "${authUserId}" and login_status to "invited" or "active".`
       : '4. Update public.clients.auth_user_id with the Auth user id and set login_status to "invited" or "active".',
+  ];
+}
+
+function nextLoginStatus(client: ClientRow, user: { email_confirmed_at?: string | null }) {
+  if (client.login_status === "active" || user.email_confirmed_at) {
+    return "active";
+  }
+
+  return "invited";
+}
+
+function passwordResetInstructions(client: ClientRow) {
+  return [
+    `The Auth user for ${client.email} exists and is confirmed.`,
+    `Confirm ${PRODUCTION_REDIRECT_URL} is configured in Supabase Auth redirect URLs.`,
+    "Then send a password reset email from Supabase Auth, or retry Resend Invite.",
+  ];
+}
+
+function unconfirmedUserInstructions(client: ClientRow, authUserId: string) {
+  return [
+    `The Auth user for ${client.email} exists but is not confirmed.`,
+    `Auth user id: ${authUserId}`,
+    `Confirm ${PRODUCTION_REDIRECT_URL} is configured in Supabase Auth redirect URLs.`,
+    "Then resend an invite or password reset email from Supabase Auth.",
   ];
 }

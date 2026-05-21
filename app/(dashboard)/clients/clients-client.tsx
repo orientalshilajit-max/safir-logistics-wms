@@ -168,7 +168,7 @@ export function ClientsClient() {
     }
   }
 
-  async function createLoginAccess(client: Client) {
+  async function createLoginAccess(client: Client, action: "create" | "resend" = "create") {
     if (creatingAccessId) {
       return;
     }
@@ -182,7 +182,9 @@ export function ClientsClient() {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session?.access_token ?? ""}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({ action }),
     });
     const body = (await response.json()) as {
       message?: string;
@@ -194,7 +196,12 @@ export function ClientsClient() {
       setError(body.error ?? "Unable to create login access.");
       setOnboardingInstructions(body.instructions ?? manualOnboardingInstructions(client));
     } else {
-      setOnboardingMessage(body.message ?? `Invitation sent to ${client.email}.`);
+      setOnboardingMessage(
+        body.message ??
+          (action === "resend"
+            ? "Invitation link resent."
+            : `Invitation sent to ${client.email}.`),
+      );
       await loadClients();
     }
 
@@ -251,14 +258,25 @@ export function ClientsClient() {
                           <Button type="button" variant="secondary" onClick={() => startEdit(client)}>
                             Edit
                           </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={creatingAccessId === client.id}
-                            onClick={() => void createLoginAccess(client)}
-                          >
-                            {creatingAccessId === client.id ? "Creating..." : "Create Login Access"}
-                          </Button>
+                          {client.login_status === "no login" ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={creatingAccessId === client.id}
+                              onClick={() => void createLoginAccess(client)}
+                            >
+                              {creatingAccessId === client.id ? "Creating..." : "Create Login Access"}
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={creatingAccessId === client.id}
+                              onClick={() => void createLoginAccess(client, "resend")}
+                            >
+                              {creatingAccessId === client.id ? "Sending..." : "Resend Invite"}
+                            </Button>
+                          )}
                           <Button type="button" variant="danger" onClick={() => void deleteClient(client)}>
                             Delete
                           </Button>
@@ -370,14 +388,28 @@ export function ClientsClient() {
                     Send an invite and link this client to a Supabase Auth user.
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={creatingAccessId === editing.id}
-                  onClick={() => void createLoginAccess(editing)}
-                >
-                  {creatingAccessId === editing.id ? "Creating..." : "Create Login Access"}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {editing.login_status === "no login" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={creatingAccessId === editing.id}
+                      onClick={() => void createLoginAccess(editing)}
+                    >
+                      {creatingAccessId === editing.id ? "Creating..." : "Create Login Access"}
+                    </Button>
+                  ) : null}
+                  {editing.login_status === "invited" || editing.login_status === "active" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={creatingAccessId === editing.id}
+                      onClick={() => void createLoginAccess(editing, "resend")}
+                    >
+                      {creatingAccessId === editing.id ? "Sending..." : "Resend Invite"}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             </div>
           ) : null}
