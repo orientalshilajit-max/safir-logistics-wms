@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthProvider } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
@@ -75,16 +76,18 @@ function LoginForm() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
       <section className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Safir Logistics
-          </p>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+        <div className="text-center">
+          <Image
+            src="/logosaflog.png"
+            alt="Safir Logistics"
+            width={198}
+            height={80}
+            priority
+            className="mx-auto h-14 w-auto object-contain"
+          />
+          <h1 className="mt-5 text-2xl font-semibold tracking-tight text-slate-950">
             Sign in to WMS
           </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Use the admin or client account created in Supabase Auth.
-          </p>
         </div>
 
         <form className="mt-6 space-y-4" onSubmit={(event) => void handleLogin(event)}>
