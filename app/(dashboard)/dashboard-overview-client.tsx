@@ -154,12 +154,6 @@ export function DashboardOverviewClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Operations"
-        title="Warehouse Overview"
-        description="A live command surface for prep center clients, inbound work, receiving, and available stock."
-        action={<StatusBadge tone="emerald">Connected to Supabase</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -182,17 +176,6 @@ export function DashboardOverviewClient() {
         <PlaceholderMetric label="Invoices" />
         <PlaceholderMetric label="Revenue" />
       </section>
-
-      <Panel
-        title="Phase 1 workspace"
-        description="Requests, invoices, billing, and payments are intentionally not wired yet."
-      >
-        <div className="grid gap-4 md:grid-cols-3">
-          <WorkflowStep title="1. Add clients" body="Create client accounts before catalog and inbound work." />
-          <WorkflowStep title="2. Add products" body="Attach product records to clients with SKU/FNSKU/ASIN details." />
-          <WorkflowStep title="3. Receive inventory" body="Create incoming shipments, receive items, and post to inventory." />
-        </div>
-      </Panel>
     </div>
   );
 }
@@ -253,15 +236,6 @@ function PlaceholderMetric({ label }: { label: string }) {
         <StatusBadge>Placeholder</StatusBadge>
       </div>
       <p className="mt-5 text-3xl font-semibold tracking-tight text-slate-400">--</p>
-    </div>
-  );
-}
-
-function WorkflowStep({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-      <p className="text-sm font-semibold text-slate-950">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
     </div>
   );
 }
