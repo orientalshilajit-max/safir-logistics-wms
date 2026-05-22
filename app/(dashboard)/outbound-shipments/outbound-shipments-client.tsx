@@ -12,7 +12,6 @@ import {
   ErrorBanner,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -137,15 +136,12 @@ export function OutboundShipmentsClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Outbound"
-        title="Shipping & Labels"
-        description="Manage FBA box labels, shipping labels, pallet labels, and print-ready request documents."
-        action={<StatusBadge tone="blue">{requests.length} outbound requests</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_38rem]">
+        <div className="2xl:col-span-2">
+          <StatusBadge tone="blue">{requests.length} outbound requests</StatusBadge>
+        </div>
         <Panel
           title="Outbound queue"
           description="Requests that need labels, packing, shipping, or completion."

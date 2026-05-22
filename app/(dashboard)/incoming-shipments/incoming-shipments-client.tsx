@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -269,19 +268,12 @@ export function IncomingShipmentsClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Inbound"
-        title={isClientPortal ? "My Incoming Shipments" : "Incoming Shipments"}
-        description={
-          isClientPortal
-            ? "Track your inbound shipments, expected boxes, tracking numbers, and receiving status."
-            : "Create inbound shipment records with manually entered product lines and expected quantities."
-        }
-        action={<StatusBadge tone="blue">{shipments.length} shipments</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_28rem]">
+        <div className="xl:col-span-2">
+          <StatusBadge tone="blue">{shipments.length} shipments</StatusBadge>
+        </div>
         <Panel title="Shipment list" description="Inbound records from Supabase.">
           <div className="mb-4 flex flex-wrap gap-2">
             <QuickFilterButton active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>

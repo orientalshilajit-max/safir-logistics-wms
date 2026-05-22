@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
-import { ErrorBanner, PageHeader, Panel, StatusBadge } from "@/app/components/wms-ui";
+import { ErrorBanner, Panel, StatusBadge } from "@/app/components/wms-ui";
 
 type Overview = {
   clients: number;
@@ -116,12 +116,6 @@ export function DashboardOverviewClient() {
   if (isClientPortal) {
     return (
       <div className="space-y-5">
-        <PageHeader
-          eyebrow="Client Portal"
-          title="My Dashboard"
-          description="A simplified view of your inventory, inbound shipments, prep requests, invoices, and notifications."
-          action={<StatusBadge tone="emerald">Client access</StatusBadge>}
-        />
         <ErrorBanner message={error} />
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

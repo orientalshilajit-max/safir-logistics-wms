@@ -8,10 +8,8 @@ import {
   EmptyState,
   ErrorBanner,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
-  StatusBadge,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
@@ -84,16 +82,6 @@ export function InventoryClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Stock"
-        title={isClientPortal ? "My Inventory" : "Inventory"}
-        description={
-          isClientPortal
-            ? "Your current inventory balances across available, reserved, processing, shipped, and damaged units."
-            : "Live inventory balances created from completed receiving activity."
-        }
-        action={<StatusBadge tone="emerald">{totals.available} available</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

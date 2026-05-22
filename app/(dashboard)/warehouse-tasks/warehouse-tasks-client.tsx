@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -315,12 +314,6 @@ export function WarehouseTasksClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Operations"
-        title="Warehouse Task Queue"
-        description="Run picking, packing, QC, and ready-to-ship work from a fast operational queue."
-        action={<StatusBadge tone="blue">{activeCount} active tasks</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

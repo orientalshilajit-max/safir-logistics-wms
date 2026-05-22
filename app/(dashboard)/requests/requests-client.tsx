@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -497,19 +496,12 @@ export function RequestsClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Client Work"
-        title={isClientPortal ? "My Requests" : "Service Requests"}
-        description={
-          isClientPortal
-            ? "Create prep requests from your available inventory and track approval or work status."
-            : "Create service requests from available inventory, estimate service costs, and reserve stock when submitted."
-        }
-        action={<StatusBadge tone="blue">{requests.length} requests</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
+        <div className="2xl:col-span-2">
+          <StatusBadge tone="blue">{requests.length} requests</StatusBadge>
+        </div>
         <Panel
           title={isClientPortal ? "My request list" : "Requests"}
           description="Submitted requests require admin approval before work starts."

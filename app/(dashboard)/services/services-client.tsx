@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   StatusBadge,
   textAreaClassName,
@@ -196,15 +195,12 @@ export function ServicesClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Catalog"
-        title="Services"
-        description="Manage the prep center service catalog and default pricing before service requests are built."
-        action={<StatusBadge tone="blue">{services.length} services</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
+        <div className="xl:col-span-2">
+          <StatusBadge tone="blue">{services.length} services</StatusBadge>
+        </div>
         <Panel title="Service catalog" description="Search, filter, edit, and deactivate service definitions.">
           <div className="mb-4 grid gap-3 md:grid-cols-4">
             <input

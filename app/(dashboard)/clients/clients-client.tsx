@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   StatusBadge,
   textAreaClassName,
@@ -237,15 +236,12 @@ export function ClientsClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Accounts"
-        title="Clients"
-        description="Create and maintain prep center client accounts used throughout products, shipments, and inventory."
-        action={<StatusBadge tone="emerald">{activeCount} active</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="xl:col-span-2">
+          <StatusBadge tone="emerald">{activeCount} active</StatusBadge>
+        </div>
         <Panel title="Client records" description="Real records from Supabase.">
           {loading ? (
             <LoadingState label="Loading clients..." />

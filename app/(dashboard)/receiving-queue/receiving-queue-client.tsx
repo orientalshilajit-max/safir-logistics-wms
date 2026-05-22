@@ -10,7 +10,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -272,13 +271,9 @@ export function ReceivingQueueClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Inbound"
-        title="Receiving Queue"
-        description="Enter received, damaged, and missing quantities, then post completed items into inventory."
-        action={<StatusBadge tone={openItems > 0 ? "amber" : "emerald"}>{openItems} open</StatusBadge>}
-      />
       <ErrorBanner message={error} />
+
+      <StatusBadge tone={openItems > 0 ? "amber" : "emerald"}>{openItems} open</StatusBadge>
 
       <Panel title="Receiving items" description="Discrepancies are highlighted before inventory is updated.">
         <div className="mb-4 flex flex-wrap gap-2">

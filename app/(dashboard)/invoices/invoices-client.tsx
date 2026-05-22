@@ -11,7 +11,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   QuickFilterButton,
   StatusBadge,
@@ -307,19 +306,12 @@ export function InvoicesClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Billing"
-        title={isClientPortal ? "My Invoices" : "Invoices"}
-        description={
-          isClientPortal
-            ? "Review invoices generated from completed service requests and track payment status."
-            : "Generated from completed service requests. Payments are tracked manually."
-        }
-        action={<StatusBadge tone="blue">{invoices.length} invoices</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
+        <div className="2xl:col-span-2">
+          <StatusBadge tone="blue">{invoices.length} invoices</StatusBadge>
+        </div>
         <Panel
           title={isClientPortal ? "My invoice list" : "Invoice list"}
           description="One invoice is generated when a service request is completed."

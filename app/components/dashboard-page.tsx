@@ -1,5 +1,3 @@
-import type { DashboardRoute } from "@/app/lib/dashboard";
-
 const badgeStyles = {
   Live: "border-emerald-200 bg-emerald-50 text-emerald-700",
   Setup: "border-blue-200 bg-blue-50 text-blue-700",
@@ -20,41 +18,9 @@ const activityRows = [
   ["OUT-6409", "Outbound", "Carrier booked", "Live"],
 ];
 
-export function DashboardPage({ route }: { route: DashboardRoute }) {
+export function DashboardPage() {
   return (
     <div className="space-y-5">
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="max-w-3xl">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                {route.eyebrow}
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
-                {route.title}
-              </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-                {route.description}
-              </p>
-            </div>
-            <span
-              className={`inline-flex w-fit rounded-full border px-3 py-1 text-xs font-semibold ${badgeStyles[route.status]}`}
-            >
-              {route.status}
-            </span>
-          </div>
-        </div>
-
-        <aside className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-semibold text-slate-950">Workspace health</p>
-          <div className="mt-4 space-y-3">
-            <HealthLine label="Receiving SLA" value="92%" tone="bg-emerald-500" />
-            <HealthLine label="Prep backlog" value="18%" tone="bg-blue-500" />
-            <HealthLine label="Invoice review" value="34%" tone="bg-amber-500" />
-          </div>
-        </aside>
-      </section>
-
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map(([label, value, detail]) => (
           <div
@@ -103,7 +69,7 @@ export function DashboardPage({ route }: { route: DashboardRoute }) {
                     <td className="px-5 py-4 text-slate-600">{state}</td>
                     <td className="px-5 py-4">
                       <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeStyles[status as DashboardRoute["status"]]}`}
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeStyles[status as keyof typeof badgeStyles]}`}
                       >
                         {status}
                       </span>
@@ -129,28 +95,6 @@ export function DashboardPage({ route }: { route: DashboardRoute }) {
           </div>
         </aside>
       </section>
-    </div>
-  );
-}
-
-function HealthLine({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="font-medium text-slate-600">{label}</span>
-        <span className="font-semibold text-slate-950">{value}</span>
-      </div>
-      <div className="mt-2 h-2 rounded-full bg-slate-100">
-        <div className={`h-2 w-2/3 rounded-full ${tone}`} />
-      </div>
     </div>
   );
 }

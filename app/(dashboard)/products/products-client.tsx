@@ -10,7 +10,6 @@ import {
   Field,
   inputClassName,
   LoadingState,
-  PageHeader,
   Panel,
   StatusBadge,
   textAreaClassName,
@@ -173,15 +172,12 @@ export function ProductsClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        eyebrow="Catalog"
-        title="Products"
-        description="Maintain product records by client before they are used in inbound shipments and inventory."
-        action={<StatusBadge tone="blue">{products.length} products</StatusBadge>}
-      />
       <ErrorBanner message={error} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="xl:col-span-2">
+          <StatusBadge tone="blue">{products.length} products</StatusBadge>
+        </div>
         <Panel title="Product catalog" description="Linked to client accounts in Supabase.">
           {loading ? (
             <LoadingState label="Loading products..." />
