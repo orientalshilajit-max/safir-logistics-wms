@@ -73,6 +73,14 @@ export const dashboardRoutes: DashboardRoute[] = [
     status: "Setup",
   },
   {
+    href: "/documents",
+    label: "Documents & Files",
+    eyebrow: "Files",
+    title: "Documents & Files",
+    description: "Manage client agreements, product images, supplier invoices, compliance files, and general attachments.",
+    status: "Setup",
+  },
+  {
     href: "/invoices",
     label: "Invoices",
     eyebrow: "Billing",
@@ -161,6 +169,14 @@ export const clientPortalRoutes: DashboardRoute[] = [
     eyebrow: "Billing",
     title: "My Invoices",
     description: "Review generated invoices and payment status.",
+    status: "Live",
+  },
+  {
+    href: "/documents",
+    label: "Documents & Files",
+    eyebrow: "Files",
+    title: "Documents & Files",
+    description: "Upload and review files shared with your prep center account.",
     status: "Live",
   },
 ];

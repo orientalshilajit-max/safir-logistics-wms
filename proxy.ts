@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AUTH_TOKEN_COOKIE } from "@/app/lib/auth";
 
 const warehouseRestrictedPaths = [
+  "/documents",
   "/invoices",
   "/client-pricing-overrides",
   "/settings",

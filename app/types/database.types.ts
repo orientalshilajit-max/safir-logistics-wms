@@ -58,6 +58,14 @@ export type Database = {
       };
       attachments: {
         Row: {
+          archived_at: string | null;
+          category:
+            | "Agreement"
+            | "Product Images"
+            | "Supplier Invoice"
+            | "Compliance"
+            | "General"
+            | "Other";
           client_id: string | null;
           created_at: string;
           deleted_at: string | null;
@@ -66,11 +74,28 @@ export type Database = {
           file_name: string;
           file_url: string;
           id: string;
+          invoice_id: string | null;
+          mime_type: string | null;
           note: string | null;
+          product_id: string | null;
+          service_request_id: string | null;
+          shipment_id: string | null;
+          storage_path: string | null;
           updated_at: string;
           uploaded_by: string;
+          uploaded_by_role: "admin" | "client" | "warehouse_operator" | "system";
+          uploaded_by_user_id: string | null;
+          visible_to_client: boolean;
         };
         Insert: {
+          archived_at?: string | null;
+          category?:
+            | "Agreement"
+            | "Product Images"
+            | "Supplier Invoice"
+            | "Compliance"
+            | "General"
+            | "Other";
           client_id?: string | null;
           created_at?: string;
           deleted_at?: string | null;
@@ -79,11 +104,28 @@ export type Database = {
           file_name: string;
           file_url: string;
           id?: string;
+          invoice_id?: string | null;
+          mime_type?: string | null;
           note?: string | null;
+          product_id?: string | null;
+          service_request_id?: string | null;
+          shipment_id?: string | null;
+          storage_path?: string | null;
           updated_at?: string;
           uploaded_by: string;
+          uploaded_by_role?: "admin" | "client" | "warehouse_operator" | "system";
+          uploaded_by_user_id?: string | null;
+          visible_to_client?: boolean;
         };
         Update: {
+          archived_at?: string | null;
+          category?:
+            | "Agreement"
+            | "Product Images"
+            | "Supplier Invoice"
+            | "Compliance"
+            | "General"
+            | "Other";
           client_id?: string | null;
           created_at?: string;
           deleted_at?: string | null;
@@ -92,9 +134,18 @@ export type Database = {
           file_name?: string;
           file_url?: string;
           id?: string;
+          invoice_id?: string | null;
+          mime_type?: string | null;
           note?: string | null;
+          product_id?: string | null;
+          service_request_id?: string | null;
+          shipment_id?: string | null;
+          storage_path?: string | null;
           updated_at?: string;
           uploaded_by?: string;
+          uploaded_by_role?: "admin" | "client" | "warehouse_operator" | "system";
+          uploaded_by_user_id?: string | null;
+          visible_to_client?: boolean;
         };
         Relationships: [
           {
@@ -102,6 +153,41 @@ export type Database = {
             columns: ["client_id"];
             isOneToOne: false;
             referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attachments_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "invoices";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attachments_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attachments_service_request_id_fkey";
+            columns: ["service_request_id"];
+            isOneToOne: false;
+            referencedRelation: "service_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attachments_shipment_id_fkey";
+            columns: ["shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "incoming_shipments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attachments_uploaded_by_user_id_fkey";
+            columns: ["uploaded_by_user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
             referencedColumns: ["id"];
           },
         ];

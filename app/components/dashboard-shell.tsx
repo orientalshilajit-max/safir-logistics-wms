@@ -151,6 +151,7 @@ function getVisibleRoutes(role: UserRole) {
   }
 
   const restrictedRoutes = new Set([
+    "/documents",
     "/invoices",
     "/client-pricing-overrides",
     "/settings",
