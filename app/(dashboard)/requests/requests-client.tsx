@@ -1,6 +1,15 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type Dispatch,
+  FormEvent,
+  type ReactNode,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
@@ -73,9 +82,38 @@ type RequestForm = {
   box_count: string;
   shipping_label_urls: string;
   notes: string;
+  request_type: RequestType | "";
+  marketplace: string;
+  order_number: string;
+  ship_to_address: string;
+  shipping_method: string;
+  packaging_instructions: string;
+  fnsku: string;
+  asin: string;
+  amazon_shipment_id: string;
+  storage_duration: string;
+  destination_address: string;
+  inspection_instructions: string;
+  photo_report: boolean;
+  bundle_instructions: string;
+  bundle_components: string;
+  bundle_quantity: string;
+  labeling_requirements: string;
+  return_reason: string;
+  condition_notes: string;
+  next_action: string;
   lines: RequestLine[];
   boxes: RequestBox[];
 };
+
+type RequestType =
+  | "FBA Prep"
+  | "FBM Fulfillment"
+  | "Storage"
+  | "Forwarding"
+  | "Inspection"
+  | "Bundle Creation"
+  | "Returns";
 
 const requestStatuses: ServiceRequest["status"][] = [
   "Draft",
@@ -114,9 +152,39 @@ const emptyForm = (): RequestForm => ({
   box_count: "0",
   shipping_label_urls: "",
   notes: "",
+  request_type: "",
+  marketplace: "",
+  order_number: "",
+  ship_to_address: "",
+  shipping_method: "",
+  packaging_instructions: "",
+  fnsku: "",
+  asin: "",
+  amazon_shipment_id: "",
+  storage_duration: "",
+  destination_address: "",
+  inspection_instructions: "",
+  photo_report: false,
+  bundle_instructions: "",
+  bundle_components: "",
+  bundle_quantity: "",
+  labeling_requirements: "",
+  return_reason: "",
+  condition_notes: "",
+  next_action: "",
   lines: [newLine()],
   boxes: [],
 });
+
+const requestTypes: RequestType[] = [
+  "FBA Prep",
+  "FBM Fulfillment",
+  "Storage",
+  "Forwarding",
+  "Inspection",
+  "Bundle Creation",
+  "Returns",
+];
 
 export function RequestsClient() {
   const { clientId, role, user } = useAuth();
@@ -128,6 +196,11 @@ export function RequestsClient() {
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [form, setForm] = useState<RequestForm>(() => emptyForm());
   const [query, setQuery] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
+  const [shippingLabelFiles, setShippingLabelFiles] = useState<File[]>([]);
+  const [boxLabelFiles, setBoxLabelFiles] = useState<File[]>([]);
+  const [supportFiles, setSupportFiles] = useState<File[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -137,6 +210,12 @@ export function RequestsClient() {
   const isAdmin = role === "admin";
   const isClientPortal = role === "client";
   const selectedClientId = isAdmin ? form.client_id : clientId;
+  const selectedLine = form.lines[0];
+  const selectedInventory = inventory.find((row) => row.id === selectedLine?.inventory_id) ?? null;
+  const selectedService = useMemo(
+    () => findServiceForRequestType(services, form.request_type),
+    [form.request_type, services],
+  );
   const clientInventory = useMemo(
     () =>
       inventory.filter(
@@ -144,6 +223,18 @@ export function RequestsClient() {
       ),
     [inventory, selectedClientId],
   );
+  const filteredInventory = useMemo(() => {
+    const normalized = productSearch.trim().toLowerCase();
+
+    return clientInventory.filter((row) => {
+      if (!normalized) return true;
+      return (
+        row.products?.product_name.toLowerCase().includes(normalized) ||
+        row.products?.sku?.toLowerCase().includes(normalized) ||
+        row.products?.fnsku?.toLowerCase().includes(normalized)
+      );
+    });
+  }, [clientInventory, productSearch]);
   const filteredRequests = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -250,6 +341,55 @@ export function RequestsClient() {
     }));
   }
 
+  function updateSelectedLine(patch: Partial<RequestLine>) {
+    const line = form.lines[0] ?? newLine();
+    updateLine(line.localId, patch);
+  }
+
+  function selectInventoryRow(row: InventoryRow) {
+    const line = form.lines[0] ?? newLine();
+    const quantity = Math.min(Number(line.requested_quantity) || 1, row.available_qty);
+
+    setForm((current) => ({
+      ...current,
+      fnsku: current.fnsku || row.products?.fnsku || "",
+      lines: [
+        {
+          ...line,
+          inventory_id: row.id,
+          requested_quantity: String(Math.max(quantity, 1)),
+        },
+      ],
+      boxes: [],
+    }));
+  }
+
+  function selectRequestType(requestType: RequestType) {
+    const matchingService = findServiceForRequestType(services, requestType);
+    const line = form.lines[0] ?? newLine();
+
+    setForm((current) => ({
+      ...current,
+      request_type: requestType,
+      lines: [
+        {
+          ...line,
+          service_ids: matchingService ? [matchingService.id] : [],
+        },
+      ],
+    }));
+  }
+
+  function toggleAddOnService(serviceId: string, checked: boolean) {
+    const line = form.lines[0] ?? newLine();
+    const requiredServiceIds = selectedService ? [selectedService.id] : [];
+    const nextServices = checked
+      ? Array.from(new Set([...line.service_ids, serviceId, ...requiredServiceIds]))
+      : line.service_ids.filter((id) => id !== serviceId || requiredServiceIds.includes(id));
+
+    updateLine(line.localId, { service_ids: nextServices });
+  }
+
   function updateBox(localId: string, patch: Partial<RequestBox>) {
     setForm((current) => ({
       ...current,
@@ -278,6 +418,90 @@ export function RequestsClient() {
     }));
   }
 
+  async function revalidateSelectedInventory(requestForm: RequestForm, client_id: string) {
+    const line = requestForm.lines[0];
+
+    if (!line?.inventory_id) {
+      return "Choose a product before submitting.";
+    }
+
+    const { data, error: inventoryError } = await supabase
+      .from("inventory")
+      .select("id, client_id, available_qty, product_id, products!inventory_product_id_fkey(product_name)")
+      .eq("id", line.inventory_id)
+      .is("deleted_at", null)
+      .single();
+
+    if (inventoryError || !data) {
+      return inventoryError?.message ?? "Selected inventory is no longer available.";
+    }
+
+    if (data.client_id !== client_id) {
+      return "Selected inventory does not belong to this client.";
+    }
+
+    const requestedQuantity = Number(line.requested_quantity) || 0;
+
+    if (requestedQuantity > data.available_qty) {
+      const productName = data.products?.product_name ?? "this product";
+      return `Only ${data.available_qty} units are available for ${productName}.`;
+    }
+
+    return null;
+  }
+
+  async function uploadRequestFiles(requestId: string, client_id: string) {
+    const uploadGroups: { files: File[]; labelCategory: "shipping_label" | "fba_box_label" | "misc_document" }[] = [
+      { files: shippingLabelFiles, labelCategory: "shipping_label" },
+      { files: boxLabelFiles, labelCategory: "fba_box_label" },
+      { files: supportFiles, labelCategory: "misc_document" },
+    ];
+
+    for (const group of uploadGroups) {
+      for (const file of group.files) {
+        const storagePath = [
+          client_id,
+          requestId,
+          `${crypto.randomUUID()}-${sanitizeFileName(file.name)}`,
+        ].join("/");
+
+        const { error: uploadError } = await supabase.storage
+          .from("shipping-labels")
+          .upload(storagePath, file, {
+            contentType: file.type || undefined,
+            upsert: false,
+          });
+
+        if (uploadError) {
+          return uploadError.message;
+        }
+
+        const { data: signedUrl } = await supabase.storage
+          .from("shipping-labels")
+          .createSignedUrl(storagePath, 60 * 60);
+
+        const { error: labelError } = await supabase.from("shipping_labels").insert({
+          client_id,
+          service_request_id: requestId,
+          entity_type: "service_requests",
+          entity_id: requestId,
+          label_category: group.labelCategory,
+          file_name: file.name,
+          file_url: signedUrl?.signedUrl ?? storagePath,
+          storage_path: storagePath,
+          mime_type: file.type || null,
+          uploaded_by: user?.id ?? null,
+        });
+
+        if (labelError) {
+          return labelError.message;
+        }
+      }
+    }
+
+    return null;
+  }
+
   async function createAndSubmitRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) {
@@ -295,10 +519,19 @@ export function RequestsClient() {
       return;
     }
 
-    const validationError = validateRequest(form, inventory, client_id);
+    const normalizedForm = normalizeRequestForm(form, selectedService);
+    const validationError = validateRequest(normalizedForm, inventory, client_id);
 
     if (validationError) {
       setError(validationError);
+      setSaving(false);
+      return;
+    }
+
+    const freshInventoryError = await revalidateSelectedInventory(normalizedForm, client_id);
+
+    if (freshInventoryError) {
+      setError(freshInventoryError);
       setSaving(false);
       return;
     }
@@ -307,11 +540,11 @@ export function RequestsClient() {
       .from("service_requests")
       .insert({
         client_id,
-        carrier: form.carrier.trim() || null,
-        tracking_numbers: splitTextList(form.tracking_numbers),
-        box_count: Number(form.box_count) || form.boxes.length,
-        shipping_label_urls: splitTextList(form.shipping_label_urls),
-        notes: form.notes.trim() || null,
+        carrier: normalizedForm.carrier.trim() || null,
+        tracking_numbers: splitTextList(normalizedForm.tracking_numbers),
+        box_count: Number(normalizedForm.box_count) || normalizedForm.boxes.length,
+        shipping_label_urls: splitTextList(normalizedForm.shipping_label_urls),
+        notes: buildRequestNotes(normalizedForm),
         estimated_total: estimatedTotal,
         created_by: user?.id ?? null,
       })
@@ -326,7 +559,15 @@ export function RequestsClient() {
 
     const itemIdsByLocalId = new Map<string, string>();
 
-    for (const line of form.lines.filter((item) => item.inventory_id)) {
+    const uploadError = await uploadRequestFiles(request.id, client_id);
+
+    if (uploadError) {
+      setError(uploadError);
+      setSaving(false);
+      return;
+    }
+
+    for (const line of normalizedForm.lines.filter((item) => item.inventory_id)) {
       const inventoryRow = inventory.find((row) => row.id === line.inventory_id);
       if (!inventoryRow) continue;
 
@@ -336,7 +577,7 @@ export function RequestsClient() {
           request_id: request.id,
           inventory_id: inventoryRow.id,
           product_id: inventoryRow.product_id,
-          fnsku: inventoryRow.products?.fnsku ?? null,
+          fnsku: normalizedForm.fnsku.trim() || inventoryRow.products?.fnsku || null,
           requested_quantity: Number(line.requested_quantity) || 0,
           notes: line.notes.trim() || null,
         })
@@ -357,7 +598,7 @@ export function RequestsClient() {
         services,
         overrides,
         client_id,
-        Number(form.box_count) || form.boxes.length,
+        Number(normalizedForm.box_count) || normalizedForm.boxes.length,
       );
 
       if (serviceRows.length > 0) {
@@ -373,7 +614,7 @@ export function RequestsClient() {
       }
     }
 
-    for (const box of form.boxes) {
+    for (const box of normalizedForm.boxes) {
       const { data: requestBox, error: boxError } = await supabase
         .from("request_boxes")
         .insert({
@@ -396,7 +637,7 @@ export function RequestsClient() {
       const boxItems = Object.entries(box.items)
         .map(([lineLocalId, quantity]) => {
           const requestItemId = itemIdsByLocalId.get(lineLocalId);
-          const line = form.lines.find((item) => item.localId === lineLocalId);
+          const line = normalizedForm.lines.find((item) => item.localId === lineLocalId);
           const inventoryRow = inventory.find((row) => row.id === line?.inventory_id);
 
           if (!requestItemId || !inventoryRow || Number(quantity) <= 0) {
@@ -438,6 +679,11 @@ export function RequestsClient() {
       setError(submitError.message);
     } else {
       setForm(emptyForm());
+      setProductSearch("");
+      setMoreOptionsOpen(false);
+      setShippingLabelFiles([]);
+      setBoxLabelFiles([]);
+      setSupportFiles([]);
       await loadData();
     }
 
@@ -493,6 +739,19 @@ export function RequestsClient() {
       ),
     );
   }
+
+  const requestedQuantity = Number(selectedLine?.requested_quantity) || 0;
+  const hasSelectedProduct = Boolean(selectedInventory);
+  const hasValidQuantity =
+    Boolean(selectedInventory) &&
+    Number.isInteger(requestedQuantity) &&
+    requestedQuantity > 0 &&
+    requestedQuantity <= (selectedInventory?.available_qty ?? 0);
+  const hasSelectedRequestType = Boolean(form.request_type);
+  const selectedAddOns = services.filter((service) =>
+    selectedLine?.service_ids.includes(service.id),
+  );
+  const reviewReady = hasSelectedProduct && hasValidQuantity && hasSelectedRequestType;
 
   return (
     <div className="space-y-5">
@@ -641,232 +900,281 @@ export function RequestsClient() {
         <div className="space-y-5">
           <Panel
             title={isClientPortal ? "Create my request" : "Create request"}
-            description="Quantities are reserved from available inventory when submitted."
+            description="A simple guided request from available inventory."
           >
             <form className="space-y-5" onSubmit={(event) => void createAndSubmitRequest(event)}>
-            {isAdmin ? (
-              <Field label="Client">
-                <select
-                  className={inputClassName}
-                  required
-                  value={form.client_id}
-                  onChange={(event) =>
-                    setForm({ ...form, client_id: event.target.value, lines: [newLine()], boxes: [] })
-                  }
-                >
-                  <option value="">Select client</option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.company_name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            ) : null}
+              {isAdmin ? (
+                <Field label="Client">
+                  <select
+                    className={inputClassName}
+                    required
+                    value={form.client_id}
+                    onChange={(event) => {
+                      setForm({
+                        ...emptyForm(),
+                        client_id: event.target.value,
+                      });
+                      setProductSearch("");
+                      setMoreOptionsOpen(false);
+                      setShippingLabelFiles([]);
+                      setBoxLabelFiles([]);
+                      setSupportFiles([]);
+                    }}
+                  >
+                    <option value="">Select client</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.company_name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Carrier">
-                <input
-                  className={inputClassName}
-                  value={form.carrier}
-                  onChange={(event) => setForm({ ...form, carrier: event.target.value })}
-                />
-              </Field>
-              <Field label="Box count">
-                <input
-                  className={inputClassName}
-                  min="0"
-                  type="number"
-                  value={form.box_count}
-                  onChange={(event) => setForm({ ...form, box_count: event.target.value })}
-                />
-              </Field>
-            </div>
-            <Field label="Tracking numbers">
-              <textarea
-                className={textAreaClassName}
-                placeholder="One per line or comma separated"
-                value={form.tracking_numbers}
-                onChange={(event) =>
-                  setForm({ ...form, tracking_numbers: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="Shipping label URLs">
-              <textarea
-                className={textAreaClassName}
-                placeholder="One per line or comma separated"
-                value={form.shipping_label_urls}
-                onChange={(event) =>
-                  setForm({ ...form, shipping_label_urls: event.target.value })
-                }
-              />
-            </Field>
-
-            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-950">Products</p>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setForm({ ...form, lines: [...form.lines, newLine()] })}
-                  disabled={!selectedClientId}
-                >
-                  Add product
-                </Button>
-              </div>
-              {form.lines.map((line) => {
-                const row = inventory.find((item) => item.id === line.inventory_id);
-                return (
-                  <div key={line.localId} className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
-                    <Field label="Inventory product">
-                      <select
-                        className={inputClassName}
-                        required
-                        value={line.inventory_id}
-                        onChange={(event) =>
-                          updateLine(line.localId, { inventory_id: event.target.value })
-                        }
-                      >
-                        <option value="">Select product</option>
-                        {clientInventory.map((inventoryRow) => (
-                          <option key={inventoryRow.id} value={inventoryRow.id}>
-                            {inventoryRow.products?.product_name ?? "Unknown"} - available {inventoryRow.available_qty}
-                          </option>
+              <WizardSection
+                step="1"
+                title="Choose product"
+                ready={hasSelectedProduct}
+              >
+                {!selectedClientId ? (
+                  <p className="text-sm text-slate-500">Select a client to see available inventory.</p>
+                ) : (
+                  <div className="space-y-3">
+                    <input
+                      className={inputClassName}
+                      placeholder="Search products, SKU, or FNSKU"
+                      value={productSearch}
+                      onChange={(event) => setProductSearch(event.target.value)}
+                    />
+                    {filteredInventory.length === 0 ? (
+                      <EmptyState
+                        title="No available inventory"
+                        body="This client does not have available units ready for a request."
+                      />
+                    ) : (
+                      <div className="grid gap-2">
+                        {filteredInventory.map((row) => (
+                          <button
+                            key={row.id}
+                            type="button"
+                            className={`rounded-lg border p-4 text-left transition hover:border-blue-300 hover:bg-blue-50 ${
+                              selectedLine?.inventory_id === row.id
+                                ? "border-blue-300 bg-blue-50"
+                                : "border-slate-200 bg-white"
+                            }`}
+                            onClick={() => selectInventoryRow(row)}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-semibold text-slate-950">
+                                  {row.products?.product_name ?? "Unknown product"}
+                                </p>
+                                <p className="mt-1 text-xs font-medium text-slate-500">
+                                  SKU {row.products?.sku ?? "-"} · FNSKU {row.products?.fnsku ?? "-"}
+                                </p>
+                              </div>
+                              <StatusBadge tone="emerald">{row.available_qty} available</StatusBadge>
+                            </div>
+                          </button>
                         ))}
-                      </select>
-                    </Field>
-                    {row ? (
-                      <p className="text-xs font-medium text-slate-500">
-                        FNSKU: {row.products?.fnsku ?? "-"} · SKU: {row.products?.sku ?? "-"} · Available: {row.available_qty}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </WizardSection>
+
+              {hasSelectedProduct ? (
+                <WizardSection
+                  step="2"
+                  title="Choose quantity"
+                  ready={hasValidQuantity}
+                >
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-sm font-semibold text-slate-950">
+                        {selectedInventory?.products?.product_name ?? "Selected product"}
                       </p>
-                    ) : null}
+                      <p className="mt-1 text-xs font-medium text-slate-500">
+                        {selectedInventory?.available_qty ?? 0} units available
+                      </p>
+                    </div>
                     <Field label="Requested quantity">
                       <input
                         className={inputClassName}
                         min="1"
-                        max={row?.available_qty}
+                        max={selectedInventory?.available_qty}
                         required
                         type="number"
-                        value={line.requested_quantity}
+                        value={selectedLine?.requested_quantity ?? ""}
                         onChange={(event) =>
-                          updateLine(line.localId, { requested_quantity: event.target.value })
+                          updateSelectedLine({ requested_quantity: event.target.value })
                         }
                       />
                     </Field>
-                    <Field label="Services">
-                      <div className="grid gap-2 rounded-md border border-slate-200 p-3">
-                        {services.map((service) => (
-                          <label key={service.id} className="flex items-center justify-between gap-3 text-sm">
-                            <span className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={line.service_ids.includes(service.id)}
-                                onChange={(event) => {
-                                  updateLine(line.localId, {
-                                    service_ids: event.target.checked
-                                      ? [...line.service_ids, service.id]
-                                      : line.service_ids.filter((id) => id !== service.id),
-                                  });
-                                }}
-                              />
-                              <span className="font-medium text-slate-700">{service.name}</span>
-                            </span>
-                            <span className="text-xs text-slate-500">
-                              {formatMoney(getServicePrice(service, overrides, selectedClientId))} · {formatPricingType(service.pricing_type)}
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </Field>
-                    <Field label="Line notes">
-                      <input
-                        className={inputClassName}
-                        value={line.notes}
-                        onChange={(event) =>
-                          updateLine(line.localId, { notes: event.target.value })
-                        }
-                      />
-                    </Field>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() =>
+                        updateSelectedLine({
+                          requested_quantity: String(selectedInventory?.available_qty ?? 0),
+                        })
+                      }
+                    >
+                      All units
+                    </Button>
+                    {!hasValidQuantity ? (
+                      <p className="text-sm font-medium text-amber-700">
+                        Enter a whole number no higher than available inventory.
+                      </p>
+                    ) : null}
                   </div>
-                );
-              })}
-            </div>
-
-            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-950">Boxes</p>
-                <Button type="button" variant="secondary" onClick={addBox}>
-                  Add box
-                </Button>
-              </div>
-              {form.boxes.length === 0 ? (
-                <p className="text-sm text-slate-500">Box details can be added now or later.</p>
+                </WizardSection>
               ) : null}
-              {form.boxes.map((box) => (
-                <div key={box.localId} className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Field label="Box number">
-                      <input className={inputClassName} min="1" type="number" value={box.box_number} onChange={(event) => updateBox(box.localId, { box_number: event.target.value })} />
-                    </Field>
-                    <Field label="Tracking number">
-                      <input className={inputClassName} value={box.tracking_number} onChange={(event) => updateBox(box.localId, { tracking_number: event.target.value })} />
-                    </Field>
-                    <Field label="Uploaded label URL">
-                      <input className={inputClassName} value={box.uploaded_label_url} onChange={(event) => updateBox(box.localId, { uploaded_label_url: event.target.value })} />
-                    </Field>
-                    <Field label="Box barcode">
-                      <input className={inputClassName} value={box.box_barcode} onChange={(event) => updateBox(box.localId, { box_barcode: event.target.value })} />
-                    </Field>
-                    <Field label="Barcode type">
-                      <input className={inputClassName} placeholder="Code 128, QR" value={box.box_barcode_type} onChange={(event) => updateBox(box.localId, { box_barcode_type: event.target.value })} />
-                    </Field>
-                  </div>
-                  <div className="grid gap-2">
-                    {form.lines.map((line) => {
-                      const row = inventory.find((item) => item.id === line.inventory_id);
+
+              {hasValidQuantity ? (
+                <WizardSection
+                  step="3"
+                  title="Choose service"
+                  ready={hasSelectedRequestType}
+                >
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {requestTypes.map((requestType) => {
+                      const service = findServiceForRequestType(services, requestType);
+
                       return (
-                        <Field key={line.localId} label={`${row?.products?.product_name ?? "Product"} quantity in box`}>
-                          <input
-                            className={inputClassName}
-                            min="0"
-                            type="number"
-                            value={box.items[line.localId] ?? ""}
-                            onChange={(event) =>
-                              updateBox(box.localId, {
-                                items: { ...box.items, [line.localId]: event.target.value },
-                              })
-                            }
-                          />
-                        </Field>
+                        <button
+                          key={requestType}
+                          type="button"
+                          className={`rounded-lg border p-4 text-left transition hover:border-blue-300 hover:bg-blue-50 ${
+                            form.request_type === requestType
+                              ? "border-blue-300 bg-blue-50"
+                              : "border-slate-200 bg-white"
+                          }`}
+                          onClick={() => selectRequestType(requestType)}
+                        >
+                          <p className="font-semibold text-slate-950">{requestType}</p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {service
+                              ? `${formatMoney(getServicePrice(service, overrides, selectedClientId))} · ${formatPricingType(service.pricing_type)}`
+                              : "Catalog price not configured"}
+                          </p>
+                        </button>
                       );
                     })}
                   </div>
-                </div>
-              ))}
-            </div>
+                </WizardSection>
+              ) : null}
 
-            <Field label="Request notes">
-              <textarea
-                className={textAreaClassName}
-                value={form.notes}
-                onChange={(event) => setForm({ ...form, notes: event.target.value })}
-              />
-            </Field>
+              {hasSelectedRequestType ? (
+                <WizardSection step="4" title="Request details" ready>
+                  <ServiceDetailsFields
+                    form={form}
+                    setForm={setForm}
+                    addBox={addBox}
+                    updateBox={updateBox}
+                    shippingLabelFiles={shippingLabelFiles}
+                    boxLabelFiles={boxLabelFiles}
+                    supportFiles={supportFiles}
+                    setShippingLabelFiles={setShippingLabelFiles}
+                    setBoxLabelFiles={setBoxLabelFiles}
+                    setSupportFiles={setSupportFiles}
+                  />
 
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <p className="text-sm font-semibold text-blue-900">Estimated total</p>
-              <p className="mt-2 text-2xl font-semibold text-blue-950">
-                {formatMoney(estimatedTotal)}
-              </p>
-              <p className="mt-1 text-xs font-medium text-blue-700">
-                Client overrides are used when active; otherwise catalog defaults apply.
-              </p>
-            </div>
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <button
+                      type="button"
+                      className="text-sm font-semibold text-blue-700"
+                      onClick={() => setMoreOptionsOpen((open) => !open)}
+                    >
+                      {moreOptionsOpen ? "Hide more options" : "More options"}
+                    </button>
+                    {moreOptionsOpen ? (
+                      <div className="space-y-3">
+                        <Field label="Request notes">
+                          <textarea
+                            className={textAreaClassName}
+                            value={form.notes}
+                            onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                          />
+                        </Field>
+                        <Field label="Additional services">
+                          <div className="grid gap-2 rounded-md border border-slate-200 p-3">
+                            {services.map((service) => (
+                              <label key={service.id} className="flex items-center justify-between gap-3 text-sm">
+                                <span className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedLine?.service_ids.includes(service.id) ?? false}
+                                    disabled={selectedService?.id === service.id}
+                                    onChange={(event) =>
+                                      toggleAddOnService(service.id, event.target.checked)
+                                    }
+                                  />
+                                  <span className="font-medium text-slate-700">{service.name}</span>
+                                </span>
+                                <span className="text-xs text-slate-500">
+                                  {formatMoney(getServicePrice(service, overrides, selectedClientId))} · {formatPricingType(service.pricing_type)}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </Field>
+                        <Field label="Shipping label URLs">
+                          <textarea
+                            className={textAreaClassName}
+                            placeholder="One per line or comma separated"
+                            value={form.shipping_label_urls}
+                            onChange={(event) =>
+                              setForm({ ...form, shipping_label_urls: event.target.value })
+                            }
+                          />
+                        </Field>
+                      </div>
+                    ) : null}
+                  </div>
+                </WizardSection>
+              ) : null}
 
-              <Button type="submit" disabled={saving || !selectedClientId}>
-                {saving ? "Submitting..." : "Create and submit request"}
-              </Button>
+              {reviewReady ? (
+                <WizardSection step="5" title="Review & submit" ready>
+                  <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <div className="grid gap-3 text-sm text-blue-950 sm:grid-cols-2">
+                      <p>
+                        <span className="block text-xs font-semibold uppercase text-blue-700">Product</span>
+                        {selectedInventory?.products?.product_name ?? "Selected product"}
+                      </p>
+                      <p>
+                        <span className="block text-xs font-semibold uppercase text-blue-700">Quantity</span>
+                        {requestedQuantity} units
+                      </p>
+                      <p>
+                        <span className="block text-xs font-semibold uppercase text-blue-700">Service</span>
+                        {form.request_type}
+                      </p>
+                      <p>
+                        <span className="block text-xs font-semibold uppercase text-blue-700">Files</span>
+                        {shippingLabelFiles.length + boxLabelFiles.length + supportFiles.length} uploaded
+                      </p>
+                      <p className="sm:col-span-2">
+                        <span className="block text-xs font-semibold uppercase text-blue-700">Add-ons</span>
+                        {selectedAddOns.length > 0
+                          ? selectedAddOns.map((service) => service.name).join(", ")
+                          : "None"}
+                      </p>
+                    </div>
+                    <div className="border-t border-blue-200 pt-3">
+                      <p className="text-sm font-semibold text-blue-900">Estimated total</p>
+                      <p className="mt-1 text-2xl font-semibold text-blue-950">
+                        {formatMoney(estimatedTotal)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button type="submit" disabled={saving || !selectedClientId || !reviewReady}>
+                    {saving ? "Submitting..." : "Submit request"}
+                  </Button>
+                </WizardSection>
+              ) : null}
             </form>
           </Panel>
           <ActivityTimeline
@@ -895,6 +1203,312 @@ function splitTextList(value: string) {
     .filter(Boolean);
 }
 
+function WizardSection({
+  step,
+  title,
+  ready,
+  children,
+}: {
+  step: string;
+  title: string;
+  ready: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
+            {step}
+          </span>
+          <p className="font-semibold text-slate-950">{title}</p>
+        </div>
+        {ready ? <StatusBadge tone="emerald">Ready</StatusBadge> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function ServiceDetailsFields({
+  form,
+  setForm,
+  addBox,
+  updateBox,
+  shippingLabelFiles,
+  boxLabelFiles,
+  supportFiles,
+  setShippingLabelFiles,
+  setBoxLabelFiles,
+  setSupportFiles,
+}: {
+  form: RequestForm;
+  setForm: Dispatch<SetStateAction<RequestForm>>;
+  addBox: () => void;
+  updateBox: (localId: string, patch: Partial<RequestBox>) => void;
+  shippingLabelFiles: File[];
+  boxLabelFiles: File[];
+  supportFiles: File[];
+  setShippingLabelFiles: Dispatch<SetStateAction<File[]>>;
+  setBoxLabelFiles: Dispatch<SetStateAction<File[]>>;
+  setSupportFiles: Dispatch<SetStateAction<File[]>>;
+}) {
+  if (form.request_type === "FBA Prep") {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="FNSKU">
+            <input
+              className={inputClassName}
+              required
+              value={form.fnsku}
+              onChange={(event) => setForm({ ...form, fnsku: event.target.value })}
+            />
+          </Field>
+          <Field label="ASIN optional">
+            <input
+              className={inputClassName}
+              value={form.asin}
+              onChange={(event) => setForm({ ...form, asin: event.target.value })}
+            />
+          </Field>
+          <Field label="Amazon Shipment ID optional">
+            <input
+              className={inputClassName}
+              value={form.amazon_shipment_id}
+              onChange={(event) => setForm({ ...form, amazon_shipment_id: event.target.value })}
+            />
+          </Field>
+          <Field label="Box count">
+            <input
+              className={inputClassName}
+              min="0"
+              required
+              type="number"
+              value={form.box_count}
+              onChange={(event) => setForm({ ...form, box_count: event.target.value })}
+            />
+          </Field>
+          <Field label="Carrier">
+            <input
+              className={inputClassName}
+              value={form.carrier}
+              onChange={(event) => setForm({ ...form, carrier: event.target.value })}
+            />
+          </Field>
+          <Field label="Tracking numbers">
+            <textarea
+              className={textAreaClassName}
+              placeholder="One per line or comma separated"
+              value={form.tracking_numbers}
+              onChange={(event) => setForm({ ...form, tracking_numbers: event.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FileField
+            label="Shipping labels upload"
+            files={shippingLabelFiles}
+            onChange={setShippingLabelFiles}
+          />
+          <FileField
+            label="Box labels upload"
+            files={boxLabelFiles}
+            onChange={setBoxLabelFiles}
+          />
+        </div>
+        <BoxesEditor form={form} addBox={addBox} updateBox={updateBox} />
+      </div>
+    );
+  }
+
+  if (form.request_type === "FBM Fulfillment") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Marketplace/store optional">
+          <input className={inputClassName} value={form.marketplace} onChange={(event) => setForm({ ...form, marketplace: event.target.value })} />
+        </Field>
+        <Field label="Order number optional">
+          <input className={inputClassName} value={form.order_number} onChange={(event) => setForm({ ...form, order_number: event.target.value })} />
+        </Field>
+        <Field label="Ship-to/customer address">
+          <textarea className={textAreaClassName} required value={form.ship_to_address} onChange={(event) => setForm({ ...form, ship_to_address: event.target.value })} />
+        </Field>
+        <Field label="Shipping method">
+          <input className={inputClassName} required value={form.shipping_method} onChange={(event) => setForm({ ...form, shipping_method: event.target.value })} />
+        </Field>
+        <Field label="Packaging instructions">
+          <textarea className={textAreaClassName} value={form.packaging_instructions} onChange={(event) => setForm({ ...form, packaging_instructions: event.target.value })} />
+        </Field>
+        <Field label="Tracking number optional">
+          <input className={inputClassName} value={form.tracking_numbers} onChange={(event) => setForm({ ...form, tracking_numbers: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  if (form.request_type === "Storage") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Storage notes">
+          <textarea className={textAreaClassName} required value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+        </Field>
+        <Field label="Expected duration optional">
+          <input className={inputClassName} value={form.storage_duration} onChange={(event) => setForm({ ...form, storage_duration: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  if (form.request_type === "Forwarding") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Destination address">
+          <textarea className={textAreaClassName} required value={form.destination_address} onChange={(event) => setForm({ ...form, destination_address: event.target.value })} />
+        </Field>
+        <Field label="Carrier">
+          <input className={inputClassName} required value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
+        </Field>
+        <Field label="Shipping method">
+          <input className={inputClassName} required value={form.shipping_method} onChange={(event) => setForm({ ...form, shipping_method: event.target.value })} />
+        </Field>
+        <Field label="Notes">
+          <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  if (form.request_type === "Inspection") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Inspection instructions">
+          <textarea className={textAreaClassName} required value={form.inspection_instructions} onChange={(event) => setForm({ ...form, inspection_instructions: event.target.value })} />
+        </Field>
+        <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={form.photo_report}
+            onChange={(event) => setForm({ ...form, photo_report: event.target.checked })}
+          />
+          Photo report
+        </label>
+        <Field label="Notes">
+          <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  if (form.request_type === "Bundle Creation") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Bundle instructions">
+          <textarea className={textAreaClassName} required value={form.bundle_instructions} onChange={(event) => setForm({ ...form, bundle_instructions: event.target.value })} />
+        </Field>
+        <Field label="Components/products">
+          <textarea className={textAreaClassName} required value={form.bundle_components} onChange={(event) => setForm({ ...form, bundle_components: event.target.value })} />
+        </Field>
+        <Field label="Quantity to bundle">
+          <input className={inputClassName} min="1" required type="number" value={form.bundle_quantity} onChange={(event) => setForm({ ...form, bundle_quantity: event.target.value })} />
+        </Field>
+        <Field label="Labeling requirements optional">
+          <input className={inputClassName} value={form.labeling_requirements} onChange={(event) => setForm({ ...form, labeling_requirements: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  if (form.request_type === "Returns") {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Return reason">
+          <textarea className={textAreaClassName} required value={form.return_reason} onChange={(event) => setForm({ ...form, return_reason: event.target.value })} />
+        </Field>
+        <Field label="Condition notes">
+          <textarea className={textAreaClassName} value={form.condition_notes} onChange={(event) => setForm({ ...form, condition_notes: event.target.value })} />
+        </Field>
+        <FileField
+          label="Photos/files optional"
+          files={supportFiles}
+          onChange={setSupportFiles}
+        />
+        <Field label="Next action requested">
+          <input className={inputClassName} required value={form.next_action} onChange={(event) => setForm({ ...form, next_action: event.target.value })} />
+        </Field>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function FileField({
+  label,
+  files,
+  onChange,
+}: {
+  label: string;
+  files: File[];
+  onChange: Dispatch<SetStateAction<File[]>>;
+}) {
+  return (
+    <Field label={label}>
+      <input
+        className={inputClassName}
+        multiple
+        type="file"
+        onChange={(event) => onChange(Array.from(event.target.files ?? []))}
+      />
+      {files.length > 0 ? (
+        <p className="mt-1 text-xs font-medium text-slate-500">
+          {files.length} file{files.length === 1 ? "" : "s"} selected
+        </p>
+      ) : null}
+    </Field>
+  );
+}
+
+function BoxesEditor({
+  form,
+  addBox,
+  updateBox,
+}: {
+  form: RequestForm;
+  addBox: () => void;
+  updateBox: (localId: string, patch: Partial<RequestBox>) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-slate-950">Boxes</p>
+        <Button type="button" variant="secondary" onClick={addBox}>
+          Add box
+        </Button>
+      </div>
+      {form.boxes.length === 0 ? (
+        <p className="text-sm text-slate-500">Box details can be added now or later.</p>
+      ) : null}
+      {form.boxes.map((box) => (
+        <div key={box.localId} className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+          <Field label="Box number">
+            <input className={inputClassName} min="1" type="number" value={box.box_number} onChange={(event) => updateBox(box.localId, { box_number: event.target.value })} />
+          </Field>
+          <Field label="Tracking number">
+            <input className={inputClassName} value={box.tracking_number} onChange={(event) => updateBox(box.localId, { tracking_number: event.target.value })} />
+          </Field>
+          <Field label="Uploaded label URL">
+            <input className={inputClassName} value={box.uploaded_label_url} onChange={(event) => updateBox(box.localId, { uploaded_label_url: event.target.value })} />
+          </Field>
+          <Field label="Box barcode">
+            <input className={inputClassName} value={box.box_barcode} onChange={(event) => updateBox(box.localId, { box_barcode: event.target.value })} />
+          </Field>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function getServicePrice(
   service: Service,
   overrides: Override[],
@@ -905,6 +1519,86 @@ function getServicePrice(
   );
 
   return override?.override_price ?? service.default_price ?? 0;
+}
+
+function findServiceForRequestType(services: Service[], requestType: RequestType | "") {
+  if (!requestType) {
+    return null;
+  }
+
+  const normalizedType = requestType.toLowerCase();
+  const primaryWord = normalizedType.split(" ")[0];
+
+  return (
+    services.find((service) => service.name.toLowerCase() === normalizedType) ??
+    services.find((service) => service.name.toLowerCase().includes(normalizedType)) ??
+    services.find(
+      (service) =>
+        service.name.toLowerCase().includes(primaryWord) ||
+        service.category.toLowerCase().includes(primaryWord),
+    ) ??
+    null
+  );
+}
+
+function normalizeRequestForm(form: RequestForm, selectedService: Service | null) {
+  const selectedLine = form.lines[0] ?? newLine();
+
+  return {
+    ...form,
+    lines: [
+      {
+        ...selectedLine,
+        service_ids: selectedService
+          ? Array.from(new Set([selectedService.id, ...selectedLine.service_ids]))
+          : selectedLine.service_ids,
+      },
+    ],
+  };
+}
+
+function buildRequestNotes(form: RequestForm) {
+  const details = [
+    `Request type: ${form.request_type || "Not selected"}`,
+    form.notes.trim() ? `Notes: ${form.notes.trim()}` : null,
+    form.fnsku.trim() ? `FNSKU: ${form.fnsku.trim()}` : null,
+    form.asin.trim() ? `ASIN: ${form.asin.trim()}` : null,
+    form.amazon_shipment_id.trim()
+      ? `Amazon Shipment ID: ${form.amazon_shipment_id.trim()}`
+      : null,
+    form.marketplace.trim() ? `Marketplace/store: ${form.marketplace.trim()}` : null,
+    form.order_number.trim() ? `Order number: ${form.order_number.trim()}` : null,
+    form.ship_to_address.trim() ? `Ship-to address: ${form.ship_to_address.trim()}` : null,
+    form.shipping_method.trim() ? `Shipping method: ${form.shipping_method.trim()}` : null,
+    form.packaging_instructions.trim()
+      ? `Packaging instructions: ${form.packaging_instructions.trim()}`
+      : null,
+    form.storage_duration.trim() ? `Expected duration: ${form.storage_duration.trim()}` : null,
+    form.destination_address.trim()
+      ? `Destination address: ${form.destination_address.trim()}`
+      : null,
+    form.inspection_instructions.trim()
+      ? `Inspection instructions: ${form.inspection_instructions.trim()}`
+      : null,
+    form.photo_report ? "Photo report requested: yes" : null,
+    form.bundle_instructions.trim()
+      ? `Bundle instructions: ${form.bundle_instructions.trim()}`
+      : null,
+    form.bundle_components.trim() ? `Bundle components: ${form.bundle_components.trim()}` : null,
+    form.bundle_quantity.trim() ? `Bundle quantity: ${form.bundle_quantity.trim()}` : null,
+    form.labeling_requirements.trim()
+      ? `Labeling requirements: ${form.labeling_requirements.trim()}`
+      : null,
+    form.return_reason.trim() ? `Return reason: ${form.return_reason.trim()}` : null,
+    form.condition_notes.trim() ? `Condition notes: ${form.condition_notes.trim()}` : null,
+    form.next_action.trim() ? `Next action requested: ${form.next_action.trim()}` : null,
+  ].filter(Boolean);
+
+  return details.join("\n");
+}
+
+function sanitizeFileName(fileName: string) {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
 function serviceQuantityBasis(
@@ -998,10 +1692,14 @@ function validateRequest(
   inventory: InventoryRow[],
   clientId: string,
 ) {
+  if (!form.request_type) {
+    return "Choose a service type.";
+  }
+
   const lines = form.lines.filter((line) => line.inventory_id);
 
   if (lines.length === 0) {
-    return "Add at least one product.";
+    return "Choose a product.";
   }
 
   for (const line of lines) {
@@ -1020,7 +1718,7 @@ function validateRequest(
       return `Requested quantity for ${inventoryRow.products?.product_name ?? "a product"} exceeds available inventory.`;
     }
 
-    if (line.service_ids.length === 0) {
+    if (line.service_ids.length === 0 && !form.request_type) {
       return `Select at least one service for ${inventoryRow.products?.product_name ?? "each product"}.`;
     }
   }
