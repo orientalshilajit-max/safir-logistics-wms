@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
   Button,
   EmptyState,
   ErrorBanner,
+  inputClassName,
   LoadingState,
   Panel,
   StatusBadge,
@@ -20,8 +21,38 @@ type Product = Tables<"products"> & {
 
 export function ProductsClient() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [clientFilter, setClientFilter] = useState("all");
+  const [productQuery, setProductQuery] = useState("");
+  const [asinQuery, setAsinQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const clientOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    products.forEach((product) => {
+      if (product.clients) {
+        byId.set(product.clients.id, product.clients.company_name);
+      }
+    });
+
+    return Array.from(byId.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    const productSearch = productQuery.trim().toLowerCase();
+    const asinSearch = asinQuery.trim().toLowerCase();
+
+    return products.filter((product) => {
+      const matchesClient = clientFilter === "all" || product.client_id === clientFilter;
+      const matchesProduct =
+        !productSearch ||
+        product.product_name.toLowerCase().includes(productSearch) ||
+        (product.sku ?? "").toLowerCase().includes(productSearch);
+      const matchesAsin = !asinSearch || (product.asin ?? "").toLowerCase().includes(asinSearch);
+
+      return matchesClient && matchesProduct && matchesAsin;
+    });
+  }, [asinQuery, clientFilter, productQuery, products]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -72,7 +103,7 @@ export function ProductsClient() {
 
       <div className="space-y-5">
         <div className="flex items-center justify-between gap-3">
-          <StatusBadge tone="blue">{products.length} products</StatusBadge>
+          <StatusBadge tone="blue">{filteredProducts.length} products</StatusBadge>
           <Link
             href="/products/new"
             className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
@@ -81,10 +112,36 @@ export function ProductsClient() {
             Add Product
           </Link>
         </div>
-        <Panel title="Product catalog" description="Linked to client accounts in Supabase.">
+        <Panel title="Product catalog">
+          <div className="mb-4 grid gap-3 lg:grid-cols-3">
+            <select
+              className={inputClassName}
+              value={clientFilter}
+              onChange={(event) => setClientFilter(event.target.value)}
+            >
+              <option value="all">All clients</option>
+              {clientOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <input
+              className={inputClassName}
+              placeholder="Filter by product or SKU"
+              value={productQuery}
+              onChange={(event) => setProductQuery(event.target.value)}
+            />
+            <input
+              className={inputClassName}
+              placeholder="Filter by ASIN"
+              value={asinQuery}
+              onChange={(event) => setAsinQuery(event.target.value)}
+            />
+          </div>
           {loading ? (
             <LoadingState label="Loading products..." />
-          ) : products.length === 0 ? (
+          ) : filteredProducts.length === 0 ? (
             <EmptyState title="No products yet" body="Create product records so incoming shipments can reference them." />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
@@ -102,7 +159,7 @@ export function ProductsClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {products.map((product) => (
+                  {filteredProducts.map((product) => (
                     <tr key={product.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-950">{product.product_name}</td>
                       <td className="px-4 py-3 text-slate-600">{product.clients?.company_name ?? "Unknown"}</td>

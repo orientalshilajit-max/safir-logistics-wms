@@ -9,23 +9,16 @@ import { NotificationMenu } from "@/app/components/notification-menu";
 import { useAuth } from "@/app/auth/auth-provider";
 import type { UserRole } from "@/app/lib/auth";
 
-const statusStyles = {
-  Live: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  Setup: "border-blue-200 bg-blue-50 text-blue-700",
-  Draft: "border-slate-200 bg-slate-100 text-slate-600",
-};
-
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { role } = useAuth();
   const visibleRoutes = getVisibleRoutes(role);
   const isClientPortal = role === "client";
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="flex min-h-screen">
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:block">
-          <SidebarContent pathname={pathname} routes={visibleRoutes} role={role} />
+          <SidebarContent pathname={pathname} routes={visibleRoutes} />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -71,14 +64,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 function SidebarContent({
   pathname,
   routes,
-  role,
 }: {
   pathname: string;
   routes: DashboardRoute[];
-  role: UserRole;
 }) {
-  const isClientPortal = role === "client";
-
   return (
     <div className="flex h-screen flex-col">
       <div className="border-b border-slate-200 px-6 py-4">
@@ -110,33 +99,10 @@ function SidebarContent({
               ].join(" ")}
             >
               <span>{item.label}</span>
-              <span
-                className={[
-                  "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-                  active
-                    ? "border-white/20 bg-white/10 text-white"
-                    : statusStyles[item.status],
-                ].join(" ")}
-              >
-                {item.status}
-              </span>
             </Link>
           );
         })}
       </nav>
-
-      <div className="border-t border-slate-200 p-4">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-950">
-            {isClientPortal ? "Need help?" : "Split panel ready"}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            {isClientPortal
-              ? "Use requests to send prep instructions and invoices to review billing status."
-              : "Pages are structured for future detail drawers, queue previews, and side-by-side workflows."}
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

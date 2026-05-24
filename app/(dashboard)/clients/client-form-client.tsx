@@ -35,7 +35,7 @@ const emptyForm: ClientForm = {
   email: "",
   phone: "",
   telegram: "",
-  status: "active",
+  status: "pending",
   login_status: "no login",
   notes: "",
 };
@@ -129,7 +129,7 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
       email: form.email.trim(),
       phone: form.phone.trim() || null,
       telegram: form.telegram.trim() || null,
-      status: form.status.trim() || "active",
+      status: form.status.trim() || "pending",
       login_status: form.login_status,
       notes: form.notes.trim() || null,
     };
@@ -233,10 +233,9 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
           </Field>
           <Field label="Status">
             <select className={inputClassName} value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-              <option value="active">active</option>
-              <option value="onboarding">onboarding</option>
-              <option value="paused">paused</option>
-              <option value="inactive">inactive</option>
+              <option value="pending">Pending</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
             </select>
           </Field>
           <Field label="Login status">

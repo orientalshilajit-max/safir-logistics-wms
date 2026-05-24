@@ -30,7 +30,7 @@ export function ClientsClient() {
   const [onboardingInstructions, setOnboardingInstructions] = useState<string[]>([]);
 
   const activeCount = useMemo(
-    () => clients.filter((client) => client.status === "active").length,
+    () => clients.filter((client) => normalizeClientStatus(client.status) === "Active").length,
     [clients],
   );
 
@@ -165,7 +165,7 @@ export function ClientsClient() {
             Add Client
           </Link>
         </div>
-        <Panel title="Client records" description="Real records from Supabase.">
+        <Panel title="Client records">
           {loading ? (
             <LoadingState label="Loading clients..." />
           ) : clients.length === 0 ? (
@@ -190,8 +190,8 @@ export function ClientsClient() {
                       <td className="px-4 py-3 text-slate-600">{client.contact_name}</td>
                       <td className="px-4 py-3 text-slate-600">{client.email}</td>
                       <td className="px-4 py-3">
-                        <StatusBadge tone={client.status === "active" ? "emerald" : "slate"}>
-                          {client.status}
+                        <StatusBadge tone={clientStatusTone(client.status)}>
+                          {normalizeClientStatus(client.status)}
                         </StatusBadge>
                       </td>
                       <td className="px-4 py-3">
@@ -318,6 +318,19 @@ function loginStatusTone(status: Client["login_status"]) {
     return "blue";
   }
 
+  return "slate";
+}
+
+function normalizeClientStatus(status: string) {
+  if (status === "active") return "Active";
+  if (status === "inactive") return "Inactive";
+  return "Pending";
+}
+
+function clientStatusTone(status: string) {
+  const normalized = normalizeClientStatus(status);
+  if (normalized === "Active") return "emerald";
+  if (normalized === "Pending") return "amber";
   return "slate";
 }
 

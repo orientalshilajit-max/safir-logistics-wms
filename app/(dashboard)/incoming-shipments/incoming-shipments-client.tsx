@@ -38,20 +38,12 @@ type Shipment = Tables<"incoming_shipments"> & {
   incoming_tracking_boxes: TrackingBox[];
 };
 
-const queueStatuses = new Set([
-  "Pending Receiving",
-  "Partially Received",
-  "Received with Discrepancy",
-  "Issue",
-]);
-
 const statusTabs = [
   { label: "All", value: "all" },
   { label: "In Transit", value: "In Transit" },
-  { label: "Pending Receiving", value: "Pending Receiving" },
-  { label: "Partially Received", value: "Partially Received" },
+  { label: "Arrived at Prep", value: "Arrived at Prep" },
   { label: "Received", value: "Received" },
-  { label: "Discrepancy / Issue", value: "discrepancy_issue" },
+  { label: "Issue", value: "Issue" },
 ];
 
 export function IncomingShipmentsClient({
@@ -107,9 +99,7 @@ export function IncomingShipmentsClient({
       const matchesStatus =
         statusFilter === "all"
           ? true
-          : statusFilter === "discrepancy_issue"
-            ? statusName === "Received with Discrepancy" || statusName === "Issue"
-            : statusName === statusFilter;
+          : statusName === statusFilter;
       const matchesQuery =
         !normalized ||
         shipment.clients?.company_name.toLowerCase().includes(normalized) ||
@@ -264,35 +254,39 @@ export function getDisplayStatus(shipment: Shipment) {
   const summary = getShipmentSummary(shipment);
   const statusName = shipment.statuses?.name ?? "In Transit";
 
-  if (summary.issueCount > 0 && statusName === "Received") {
-    return "Received with Discrepancy";
+  if (summary.issueCount > 0 || statusName === "Issue" || statusName === "Received with Discrepancy") {
+    return "Issue";
   }
 
-  if (queueStatuses.has(statusName) || statusName === "In Transit" || statusName === "Received") {
+  if (statusName === "Received") {
     return statusName;
   }
 
-  if (summary.totalBoxes > 0 && summary.deliveredBoxes > 0 && summary.deliveredBoxes < summary.totalBoxes) {
-    return "Pending Receiving";
+  if (
+    statusName === "Arrived at Prep" ||
+    statusName === "Pending Receiving" ||
+    statusName === "Partially Received" ||
+    statusName === "Delivered" ||
+    (summary.totalBoxes > 0 && summary.deliveredBoxes > 0)
+  ) {
+    return "Arrived at Prep";
   }
 
-  return statusName;
+  return "In Transit";
 }
 
 function normalizeStatusFilter(value?: string) {
-  if (value === "pending_receiving") return "Pending Receiving";
-  if (value === "partially_received") return "Partially Received";
+  if (value === "pending_receiving" || value === "arrived_at_prep") return "Arrived at Prep";
   if (value === "received") return "Received";
   if (value === "in_transit") return "In Transit";
-  if (value === "discrepancy_issue" || value === "issue") return "discrepancy_issue";
+  if (value === "discrepancy_issue" || value === "issue") return "Issue";
   return "all";
 }
 
 function statusTone(status: string) {
   if (status === "Received") return "emerald";
-  if (status === "Received with Discrepancy" || status === "Partially Received") return "amber";
   if (status === "Issue") return "rose";
-  if (status === "Pending Receiving") return "orange";
+  if (status === "Arrived at Prep") return "orange";
   return "blue";
 }
 

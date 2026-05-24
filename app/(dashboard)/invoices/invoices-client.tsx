@@ -17,7 +17,6 @@ import {
   textAreaClassName,
 } from "@/app/components/wms-ui";
 import { formatMoney } from "../services/service-form-client";
-import { ActivityTimeline } from "@/app/components/activity-timeline";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type ServiceRequest = Pick<Tables<"service_requests">, "id" | "request_number">;
@@ -86,7 +85,9 @@ export function InvoicesClient() {
 
   const isAdmin = role === "admin";
   const isClientPortal = role === "client";
-  const selectedInvoice = invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? invoices[0];
+  const selectedInvoice = selectedInvoiceId
+    ? invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null
+    : null;
   const filteredInvoices = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -129,7 +130,9 @@ export function InvoicesClient() {
     } else {
       const loaded = (data ?? []) as Invoice[];
       setInvoices(loaded);
-      setSelectedInvoiceId((current) => current ?? loaded[0]?.id ?? null);
+      setSelectedInvoiceId((current) =>
+        current && loaded.some((invoice) => invoice.id === current) ? current : null,
+      );
     }
 
     setLoading(false);
@@ -308,13 +311,10 @@ export function InvoicesClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_34rem]">
-        <div className="2xl:col-span-2">
-          <StatusBadge tone="blue">{invoices.length} invoices</StatusBadge>
-        </div>
+      <div className="space-y-5">
+        <StatusBadge tone="blue">{filteredInvoices.length} invoices</StatusBadge>
         <Panel
-          title={isClientPortal ? "My invoice list" : "Invoice list"}
-          description="One invoice is generated when a service request is completed."
+          title={isClientPortal ? "My invoices" : "Invoices"}
         >
           <div className="mb-4 flex flex-wrap gap-2">
             {(["all", "Draft", "Unpaid", "Partial Paid", "Paid", "Overdue"] as const).map(
@@ -362,33 +362,41 @@ export function InvoicesClient() {
             />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
-              <table className="w-full min-w-[860px] text-left text-sm tabular-nums">
+              <table className="w-full min-w-[920px] text-left text-sm tabular-nums">
                 <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">Invoice</th>
+                    <th className="px-4 py-3 font-semibold">Invoice #</th>
                     <th className="px-4 py-3 font-semibold">Client</th>
-                    <th className="px-4 py-3 font-semibold">Request</th>
-                    <th className="px-4 py-3 font-semibold">Due</th>
-                    <th className="px-4 py-3 font-semibold">Total</th>
-                    <th className="px-4 py-3 font-semibold">Balance</th>
+                    <th className="px-4 py-3 font-semibold">Amount</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Due Date</th>
+                    <th className="px-4 py-3 font-semibold">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredInvoices.map((invoice) => (
-                    <tr
-                      key={invoice.id}
-                      className="cursor-pointer hover:bg-slate-50"
-                      onClick={() => setSelectedInvoiceId(invoice.id)}
-                    >
+                    <tr key={invoice.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-950">{invoice.invoice_number}</td>
                       <td className="px-4 py-3 text-slate-600">{invoice.clients?.company_name ?? "Unknown"}</td>
-                      <td className="px-4 py-3 text-slate-600">{invoice.service_requests?.request_number ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{invoice.due_date}</td>
                       <td className="px-4 py-3 font-medium text-slate-950">{formatMoney(invoice.total_amount)}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatMoney(invoice.balance_due)}</td>
                       <td className="px-4 py-3">
                         <StatusBadge tone={invoiceStatusTone(invoice.status)}>{invoice.status}</StatusBadge>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{invoice.due_date}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
+                            View
+                          </Button>
+                          {isAdmin ? (
+                            <Button type="button" variant="secondary" onClick={() => setSelectedInvoiceId(invoice.id)}>
+                              Edit
+                            </Button>
+                          ) : null}
+                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
+                            Download PDF
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -398,10 +406,8 @@ export function InvoicesClient() {
           )}
         </Panel>
 
-        <Panel title="Invoice detail" description={selectedInvoice ? selectedInvoice.invoice_number : "Select an invoice"}>
-          {!selectedInvoice ? (
-            <EmptyState title="No invoice selected" body="Choose an invoice from the list." />
-          ) : (
+        {selectedInvoice ? (
+          <Panel title={`Edit ${selectedInvoice.invoice_number}`}>
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Summary label="Subtotal" value={formatMoney(selectedInvoice.subtotal)} />
@@ -560,14 +566,14 @@ export function InvoicesClient() {
                   {saving ? "Adding..." : "Add line item"}
                 </Button>
               </form>
-              <ActivityTimeline
-                entityType="invoices"
-                entityId={selectedInvoice.id}
-                title="Invoice activity"
-              />
+              <div className="flex justify-end">
+                <Button type="button" variant="secondary" onClick={() => setSelectedInvoiceId(null)}>
+                  Close editor
+                </Button>
+              </div>
             </div>
-          )}
-        </Panel>
+          </Panel>
+        ) : null}
       </div>
     </div>
   );
@@ -588,4 +594,87 @@ function invoiceStatusTone(status: InvoiceStatus) {
   if (status === "Overdue") return "amber";
   if (status === "Cancelled") return "rose";
   return "slate";
+}
+
+function openInvoicePrintView(invoice: Invoice) {
+  const lineItems = invoice.invoice_items
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(item.description)}</td>
+          <td>${item.quantity}</td>
+          <td>${formatMoney(item.unit_price)}</td>
+          <td>${formatMoney(item.line_total)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const printWindow = window.open("", "_blank", "width=900,height=1100");
+
+  if (!printWindow) {
+    return;
+  }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>${escapeHtml(invoice.invoice_number)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 40px; color: #0f172a; }
+          header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+          img { max-width: 180px; height: auto; }
+          table { width: 100%; border-collapse: collapse; margin-top: 32px; font-size: 13px; }
+          th, td { border-bottom: 1px solid #e2e8f0; padding: 10px; text-align: left; }
+          th { color: #64748b; text-transform: uppercase; font-size: 11px; letter-spacing: .08em; }
+          .totals { margin-top: 28px; margin-left: auto; width: 280px; }
+          .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #e2e8f0; }
+          .note { margin-top: 32px; color: #475569; font-size: 13px; }
+          @media print { button { display: none; } body { margin: 24px; } }
+        </style>
+      </head>
+      <body>
+        <button onclick="window.print()">Print / Save PDF</button>
+        <header>
+          <div>
+            <img src="/logosaflog.png" alt="Safir Logistics" />
+            <p>Safir Logistics</p>
+          </div>
+          <div>
+            <h1>Invoice ${escapeHtml(invoice.invoice_number)}</h1>
+            <p>Client: ${escapeHtml(invoice.clients?.company_name ?? "Unknown")}</p>
+            <p>Due date: ${escapeHtml(invoice.due_date)}</p>
+            <p>Status: ${escapeHtml(invoice.status)}</p>
+          </div>
+        </header>
+        <table>
+          <thead>
+            <tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>
+          </thead>
+          <tbody>${lineItems}</tbody>
+        </table>
+        <div class="totals">
+          <div class="row"><span>Subtotal</span><strong>${formatMoney(invoice.subtotal)}</strong></div>
+          <div class="row"><span>Discounts</span><strong>${formatMoney(invoice.discount_total)}</strong></div>
+          <div class="row"><span>Total</span><strong>${formatMoney(invoice.total_amount)}</strong></div>
+          <div class="row"><span>Paid</span><strong>${formatMoney(invoice.paid_amount)}</strong></div>
+          <div class="row"><span>Balance Due</span><strong>${formatMoney(invoice.balance_due)}</strong></div>
+        </div>
+        <p class="note">Payment instructions: manual payment details will be provided by Safir Logistics.</p>
+        ${invoice.notes ? `<p class="note">Notes: ${escapeHtml(invoice.notes)}</p>` : ""}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
