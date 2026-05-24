@@ -23,6 +23,7 @@ type IncomingShipment = Pick<Tables<"incoming_shipments">, "id" | "carrier" | "t
 type ServiceRequest = Pick<Tables<"service_requests">, "id" | "request_number">;
 type Invoice = Pick<Tables<"invoices">, "id" | "invoice_number">;
 type DocumentCategory = Tables<"attachments">["category"];
+type FileScope = Tables<"attachments">["file_scope"];
 type DocumentFile = Tables<"attachments">;
 type RelatedOptions = {
   products: Product[];
@@ -74,6 +75,7 @@ export function DocumentFormClient({
   const [document, setDocument] = useState<DocumentFile | null>(null);
   const [related, setRelated] = useState<RelatedOptions>(emptyRelated);
   const [selectedClientId, setSelectedClientId] = useState(initialClientId);
+  const [fileScope, setFileScope] = useState<FileScope>(initialClientId ? "client_specific" : "global");
   const [category, setCategory] = useState<DocumentCategory>("General");
   const [visibility, setVisibility] = useState<"internal" | "client">("client");
   const [note, setNote] = useState("");
@@ -86,7 +88,9 @@ export function DocumentFormClient({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveClientId = isAdmin ? selectedClientId : clientId ?? "";
+  const effectiveFileScope: FileScope = isAdmin ? fileScope : "client_specific";
+  const effectiveClientId =
+    effectiveFileScope === "global" ? "" : isAdmin ? selectedClientId : clientId ?? "";
 
   const loadDocument = useCallback(async () => {
     setLoading(true);
@@ -122,6 +126,7 @@ export function DocumentFormClient({
     } else if (documentResult.data) {
       const loadedDocument = documentResult.data as DocumentFile;
       setDocument(loadedDocument);
+      setFileScope(loadedDocument.file_scope);
       setSelectedClientId(loadedDocument.client_id ?? "");
       setCategory(loadedDocument.category);
       setVisibility(loadedDocument.visible_to_client ? "client" : "internal");
@@ -223,8 +228,13 @@ export function DocumentFormClient({
     event.preventDefault();
     if (saving) return;
 
-    if (!effectiveClientId) {
+    if (effectiveFileScope === "client_specific" && !effectiveClientId) {
       setError(isAdmin ? "Choose a client before saving." : "Your account is missing a client assignment.");
+      return;
+    }
+
+    if (effectiveFileScope === "global" && !isAdmin) {
+      setError("Only admins can upload global files.");
       return;
     }
 
@@ -236,16 +246,22 @@ export function DocumentFormClient({
     setSaving(true);
     setError(null);
 
+    const entityId =
+      effectiveFileScope === "global"
+        ? document?.entity_id ?? crypto.randomUUID()
+        : productId || shipmentId || serviceRequestId || invoiceId || effectiveClientId;
+
     const metadata = {
-      client_id: effectiveClientId,
+      client_id: effectiveFileScope === "global" ? null : effectiveClientId,
+      file_scope: effectiveFileScope,
       category,
       visible_to_client: isAdmin ? visibility === "client" : true,
       note: note.trim() || null,
-      product_id: productId || null,
-      shipment_id: shipmentId || null,
-      service_request_id: serviceRequestId || null,
-      invoice_id: invoiceId || null,
-      entity_id: productId || shipmentId || serviceRequestId || invoiceId || effectiveClientId,
+      product_id: effectiveFileScope === "global" ? null : productId || null,
+      shipment_id: effectiveFileScope === "global" ? null : shipmentId || null,
+      service_request_id: effectiveFileScope === "global" ? null : serviceRequestId || null,
+      invoice_id: effectiveFileScope === "global" ? null : invoiceId || null,
+      entity_id: entityId,
     };
 
     if (documentId) {
@@ -279,7 +295,7 @@ export function DocumentFormClient({
 
     const storagePath = [
       "documents",
-      effectiveClientId,
+      effectiveFileScope === "global" ? "global" : effectiveClientId,
       `${file.lastModified}-${crypto.randomUUID()}-${sanitizeFileName(file.name)}`,
     ].join("/");
 
@@ -339,6 +355,28 @@ export function DocumentFormClient({
       <Panel title={documentId ? "Edit document" : "Add document"} description={document ? document.file_name : undefined}>
         <form className="grid gap-4 lg:grid-cols-2" onSubmit={(event) => void saveDocument(event)}>
           {isAdmin ? (
+            <Field label="File scope">
+              <select
+                className={inputClassName}
+                value={fileScope}
+                onChange={(event) => {
+                  const nextScope = event.target.value as FileScope;
+                  setFileScope(nextScope);
+                  if (nextScope === "global") {
+                    setSelectedClientId("");
+                    setProductId("");
+                    setShipmentId("");
+                    setServiceRequestId("");
+                    setInvoiceId("");
+                  }
+                }}
+              >
+                <option value="global">Global file</option>
+                <option value="client_specific">Client file</option>
+              </select>
+            </Field>
+          ) : null}
+          {isAdmin && fileScope === "client_specific" ? (
             <Field label="Client">
               <select className={inputClassName} value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)} required>
                 <option value="">Choose client</option>
@@ -372,46 +410,50 @@ export function DocumentFormClient({
               <input className={inputClassName} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.csv" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required />
             </Field>
           ) : null}
-          <Field label="Product">
-            <select className={inputClassName} value={productId} onChange={(event) => setProductId(event.target.value)}>
-              <option value="">No product link</option>
-              {related.products.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.product_name}{product.sku ? ` (${product.sku})` : ""}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Incoming shipment">
-            <select className={inputClassName} value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
-              <option value="">No shipment link</option>
-              {related.shipments.map((shipment) => (
-                <option key={shipment.id} value={shipment.id}>
-                  {shipment.carrier} {shipment.tracking_numbers[0] ? `- ${shipment.tracking_numbers[0]}` : ""}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Service request">
-            <select className={inputClassName} value={serviceRequestId} onChange={(event) => setServiceRequestId(event.target.value)}>
-              <option value="">No request link</option>
-              {related.requests.map((request) => (
-                <option key={request.id} value={request.id}>
-                  {request.request_number}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Invoice">
-            <select className={inputClassName} value={invoiceId} onChange={(event) => setInvoiceId(event.target.value)}>
-              <option value="">No invoice link</option>
-              {related.invoices.map((invoice) => (
-                <option key={invoice.id} value={invoice.id}>
-                  {invoice.invoice_number}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {effectiveFileScope === "client_specific" ? (
+            <>
+              <Field label="Product">
+                <select className={inputClassName} value={productId} onChange={(event) => setProductId(event.target.value)}>
+                  <option value="">No product link</option>
+                  {related.products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.product_name}{product.sku ? ` (${product.sku})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Incoming shipment">
+                <select className={inputClassName} value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
+                  <option value="">No shipment link</option>
+                  {related.shipments.map((shipment) => (
+                    <option key={shipment.id} value={shipment.id}>
+                      {shipment.carrier} {shipment.tracking_numbers[0] ? `- ${shipment.tracking_numbers[0]}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Service request">
+                <select className={inputClassName} value={serviceRequestId} onChange={(event) => setServiceRequestId(event.target.value)}>
+                  <option value="">No request link</option>
+                  {related.requests.map((request) => (
+                    <option key={request.id} value={request.id}>
+                      {request.request_number}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Invoice">
+                <select className={inputClassName} value={invoiceId} onChange={(event) => setInvoiceId(event.target.value)}>
+                  <option value="">No invoice link</option>
+                  {related.invoices.map((invoice) => (
+                    <option key={invoice.id} value={invoice.id}>
+                      {invoice.invoice_number}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </>
+          ) : null}
           <div className="lg:col-span-2">
             <Field label="Notes">
               <textarea className={textAreaClassName} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional context for this file" />
@@ -427,7 +469,7 @@ export function DocumentFormClient({
           </div>
         </form>
       </Panel>
-      {!documentId && !effectiveClientId ? (
+      {!documentId && effectiveFileScope === "client_specific" && !effectiveClientId ? (
         <EmptyState title="Choose a client" body="Related object selectors load after a client is selected." />
       ) : null}
     </div>

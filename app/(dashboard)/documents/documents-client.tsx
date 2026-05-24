@@ -25,7 +25,9 @@ type IncomingShipment = Pick<Tables<"incoming_shipments">, "id" | "carrier" | "t
 type ServiceRequest = Pick<Tables<"service_requests">, "id" | "request_number">;
 type Invoice = Pick<Tables<"invoices">, "id" | "invoice_number">;
 type DocumentCategory = Tables<"attachments">["category"];
+type FileScope = Tables<"attachments">["file_scope"];
 type VisibilityFilter = "all" | "visible" | "internal";
+type ScopeFilter = "all" | FileScope;
 
 type DocumentFile = Tables<"attachments"> & {
   clients: Client | null;
@@ -41,6 +43,8 @@ export function DocumentsClient() {
   const isAdmin = role === "admin";
   const [clients, setClients] = useState<Client[]>([]);
   const [documents, setDocuments] = useState<DocumentFile[]>([]);
+  const [scopeTab, setScopeTab] = useState<ScopeFilter>("all");
+  const [filterScope, setFilterScope] = useState<ScopeFilter>("all");
   const [filterClientId, setFilterClientId] = useState("all");
   const [filterCategory, setFilterCategory] = useState<DocumentCategory | "all">("all");
   const [filterUploadedBy, setFilterUploadedBy] = useState("all");
@@ -117,6 +121,12 @@ export function DocumentsClient() {
   const filteredDocuments = useMemo(
     () =>
       documents.filter((document) => {
+        const activeScope = scopeTab !== "all" ? scopeTab : filterScope;
+
+        if (activeScope !== "all" && document.file_scope !== activeScope) {
+          return false;
+        }
+
         if (isAdmin && filterClientId !== "all" && document.client_id !== filterClientId) {
           return false;
         }
@@ -139,7 +149,7 @@ export function DocumentsClient() {
 
         return true;
       }),
-    [documents, filterCategory, filterClientId, filterUploadedBy, filterVisibility, isAdmin],
+    [documents, filterCategory, filterClientId, filterScope, filterUploadedBy, filterVisibility, isAdmin, scopeTab],
   );
 
   async function archiveDocument(document: DocumentFile) {
@@ -248,8 +258,39 @@ export function DocumentsClient() {
             Add Document
           </Link>
         </div>
-        <Panel title="Files" description="Client-scoped documents stored in Supabase Storage.">
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <Panel title="Files" description="Global and client-specific documents stored in Supabase Storage.">
+          <div className="mb-4 flex flex-wrap gap-2">
+            {[
+              ["all", "All Files"],
+              ["global", "Global Files"],
+              ["client_specific", "Client Files"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`min-h-9 rounded-full border px-3 text-sm font-semibold transition ${
+                  scopeTab === value
+                    ? "border-slate-950 bg-slate-950 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+                onClick={() => setScopeTab(value as ScopeFilter)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="mb-4 grid gap-3 md:grid-cols-5">
+            {isAdmin ? (
+              <select
+                className={inputClassName}
+                value={filterScope}
+                onChange={(event) => setFilterScope(event.target.value as ScopeFilter)}
+              >
+                <option value="all">All scopes</option>
+                <option value="global">Global files</option>
+                <option value="client_specific">Client files</option>
+              </select>
+            ) : null}
             {isAdmin ? (
               <select
                 className={inputClassName}
@@ -310,6 +351,7 @@ export function DocumentsClient() {
                 <thead className={tableHeadClassName}>
                   <tr>
                     <th className={`${tableCellClassName} font-semibold`}>File</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Scope</th>
                     {isAdmin ? <th className={`${tableCellClassName} font-semibold`}>Client</th> : null}
                     <th className={`${tableCellClassName} font-semibold`}>Category</th>
                     <th className={`${tableCellClassName} font-semibold`}>Visibility</th>
@@ -330,9 +372,14 @@ export function DocumentsClient() {
                           </div>
                         ) : null}
                       </td>
+                      <td className={tableCellClassName}>
+                        <StatusBadge tone={document.file_scope === "global" ? "indigo" : "blue"}>
+                          {formatScope(document.file_scope)}
+                        </StatusBadge>
+                      </td>
                       {isAdmin ? (
                         <td className={`${tableCellClassName} text-slate-600`}>
-                          {document.clients?.company_name ?? "Unknown"}
+                          {document.file_scope === "global" ? "All clients" : document.clients?.company_name ?? "Unknown"}
                         </td>
                       ) : null}
                       <td className={tableCellClassName}>
@@ -357,7 +404,7 @@ export function DocumentsClient() {
                           <Button type="button" variant="secondary" onClick={() => setPreviewDocument(document)}>
                             Preview
                           </Button>
-                          {isAdmin || document.uploaded_by_user_id === user?.id ? (
+                          {isAdmin || (document.file_scope === "client_specific" && document.uploaded_by_user_id === user?.id) ? (
                             <Link
                               href={`/documents/${document.id}/edit`}
                               className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -462,6 +509,10 @@ function formatRole(value: string) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatScope(value: FileScope) {
+  return value === "global" ? "Global" : "Client file";
 }
 
 function formatRelated(document: DocumentFile) {

@@ -72,6 +72,7 @@ export type Database = {
           entity_id: string;
           entity_type: string;
           file_name: string;
+          file_scope: "global" | "client_specific";
           file_url: string;
           id: string;
           invoice_id: string | null;
@@ -102,6 +103,7 @@ export type Database = {
           entity_id: string;
           entity_type: string;
           file_name: string;
+          file_scope?: "global" | "client_specific";
           file_url: string;
           id?: string;
           invoice_id?: string | null;
@@ -132,6 +134,7 @@ export type Database = {
           entity_id?: string;
           entity_type?: string;
           file_name?: string;
+          file_scope?: "global" | "client_specific";
           file_url?: string;
           id?: string;
           invoice_id?: string | null;
