@@ -116,6 +116,27 @@ with check (
   )
 );
 
+create policy "Clients can update their own document attachments"
+on public.attachments
+for update
+to authenticated
+using (
+  entity_type = 'documents'
+  and client_id = public.current_client_id()
+  and uploaded_by_user_id = auth.uid()
+  and deleted_at is null
+  and archived_at is null
+)
+with check (
+  entity_type = 'documents'
+  and client_id = public.current_client_id()
+  and uploaded_by_user_id = auth.uid()
+  and uploaded_by_role = 'client'
+  and visible_to_client = true
+  and deleted_at is null
+  and archived_at is null
+);
+
 create policy "Admins can manage document files"
 on storage.objects
 for all

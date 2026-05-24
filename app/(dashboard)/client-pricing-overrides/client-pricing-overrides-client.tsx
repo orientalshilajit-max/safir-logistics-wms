@@ -15,7 +15,7 @@ import {
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
-import { formatMoney, formatPricingType } from "../services/services-client";
+import { formatMoney, formatPricingType } from "../services/service-form-client";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Service = Pick<

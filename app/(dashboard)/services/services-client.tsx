@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
@@ -8,58 +9,23 @@ import {
   Button,
   EmptyState,
   ErrorBanner,
-  Field,
   inputClassName,
   LoadingState,
   Panel,
   StatusBadge,
-  textAreaClassName,
 } from "@/app/components/wms-ui";
+import { formatMoney, formatPricingType, pricingTypes } from "./service-form-client";
 
 type Service = Tables<"services">;
-type PricingType = Service["pricing_type"];
-
-const pricingTypes: PricingType[] = [
-  "per_unit",
-  "per_box",
-  "per_shipment",
-  "per_pallet",
-  "per_order",
-  "per_month",
-  "manual",
-];
-
-type ServiceForm = {
-  name: string;
-  category: string;
-  description: string;
-  pricing_type: PricingType;
-  default_price: string;
-  active: boolean;
-  visible_to_client: boolean;
-};
-
-const emptyForm: ServiceForm = {
-  name: "",
-  category: "",
-  description: "",
-  pricing_type: "per_unit",
-  default_price: "0.00",
-  active: true,
-  visible_to_client: true,
-};
 
 export function ServicesClient() {
   const { role } = useAuth();
   const [services, setServices] = useState<Service[]>([]);
-  const [form, setForm] = useState<ServiceForm>(emptyForm);
-  const [editing, setEditing] = useState<Service | null>(null);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [pricingFilter, setPricingFilter] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
@@ -88,13 +54,7 @@ export function ServicesClient() {
     });
   }, [categoryFilter, pricingFilter, query, services, statusFilter]);
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => void loadServices(), 0);
-
-    return () => window.clearTimeout(timeout);
-  }, []);
-
-  async function loadServices() {
+  const loadServices = useCallback(async () => {
     setError(null);
     const { data, error: loadError } = await supabase
       .from("services")
@@ -110,70 +70,13 @@ export function ServicesClient() {
     }
 
     setLoading(false);
-  }
+  }, []);
 
-  function startEdit(service: Service) {
-    setEditing(service);
-    setForm({
-      name: service.name,
-      category: service.category,
-      description: service.description ?? "",
-      pricing_type: service.pricing_type,
-      default_price: String(service.default_price),
-      active: service.active,
-      visible_to_client: service.visible_to_client,
-    });
-  }
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void loadServices(), 0);
 
-  function resetForm() {
-    setEditing(null);
-    setForm(emptyForm);
-  }
-
-  async function saveService(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving) {
-      return;
-    }
-
-    const defaultPrice = Number(form.default_price);
-
-    if (!form.name.trim() || !form.category.trim()) {
-      setError("Service name and category are required.");
-      return;
-    }
-
-    if (!Number.isFinite(defaultPrice) || defaultPrice < 0) {
-      setError("Default price must be zero or greater.");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-
-    const payload = {
-      name: form.name.trim(),
-      category: form.category.trim(),
-      description: form.description.trim() || null,
-      pricing_type: form.pricing_type,
-      default_price: defaultPrice,
-      active: form.active,
-      visible_to_client: form.visible_to_client,
-    };
-
-    const result = editing
-      ? await supabase.from("services").update(payload).eq("id", editing.id)
-      : await supabase.from("services").insert(payload);
-
-    if (result.error) {
-      setError(result.error.message);
-    } else {
-      resetForm();
-      await loadServices();
-    }
-
-    setSaving(false);
-  }
+    return () => window.clearTimeout(timeout);
+  }, [loadServices]);
 
   async function deactivateService(service: Service) {
     if (!window.confirm(`Deactivate ${service.name}?`)) {
@@ -197,9 +100,18 @@ export function ServicesClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_26rem]">
-        <div className="xl:col-span-2">
+      <div className="space-y-5">
+        <div className="flex items-center justify-between gap-3">
           <StatusBadge tone="blue">{services.length} services</StatusBadge>
+          {isAdmin ? (
+            <Link
+              href="/services/new"
+              className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              <span className="mr-2 text-base leading-none">+</span>
+              Add Service
+            </Link>
+          ) : null}
         </div>
         <Panel title="Service catalog" description="Search, filter, edit, and deactivate service definitions.">
           <div className="mb-4 grid gap-3 md:grid-cols-4">
@@ -288,9 +200,13 @@ export function ServicesClient() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
-                          <Button type="button" variant="secondary" onClick={() => startEdit(service)} disabled={!isAdmin}>
+                          <Link
+                            href={`/services/${service.id}/edit`}
+                            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                            aria-disabled={!isAdmin}
+                          >
                             Edit
-                          </Button>
+                          </Link>
                           <Button type="button" variant="danger" onClick={() => void deactivateService(service)} disabled={!isAdmin || !service.active}>
                             Deactivate
                           </Button>
@@ -303,109 +219,7 @@ export function ServicesClient() {
             </div>
           )}
         </Panel>
-
-        <Panel title={editing ? "Edit service" : "Create service"} description={isAdmin ? undefined : "Admin role required to manage services."}>
-          <form className="space-y-4" onSubmit={(event) => void saveService(event)}>
-            <Field label="Name">
-              <input
-                className={inputClassName}
-                disabled={!isAdmin}
-                required
-                value={form.name}
-                onChange={(event) => setForm({ ...form, name: event.target.value })}
-              />
-            </Field>
-            <Field label="Category">
-              <input
-                className={inputClassName}
-                disabled={!isAdmin}
-                required
-                placeholder="Prep, Labeling, Storage"
-                value={form.category}
-                onChange={(event) => setForm({ ...form, category: event.target.value })}
-              />
-            </Field>
-            <Field label="Pricing type">
-              <select
-                className={inputClassName}
-                disabled={!isAdmin}
-                value={form.pricing_type}
-                onChange={(event) =>
-                  setForm({ ...form, pricing_type: event.target.value as PricingType })
-                }
-              >
-                {pricingTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {formatPricingType(type)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Default price">
-              <input
-                className={inputClassName}
-                disabled={!isAdmin}
-                min="0"
-                step="0.01"
-                type="number"
-                value={form.default_price}
-                onChange={(event) => setForm({ ...form, default_price: event.target.value })}
-              />
-            </Field>
-            <Field label="Description">
-              <textarea
-                className={textAreaClassName}
-                disabled={!isAdmin}
-                value={form.description}
-                onChange={(event) => setForm({ ...form, description: event.target.value })}
-              />
-            </Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                <input
-                  type="checkbox"
-                  disabled={!isAdmin}
-                  checked={form.active}
-                  onChange={(event) => setForm({ ...form, active: event.target.checked })}
-                />
-                Active
-              </label>
-              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                <input
-                  type="checkbox"
-                  disabled={!isAdmin}
-                  checked={form.visible_to_client}
-                  onChange={(event) =>
-                    setForm({ ...form, visible_to_client: event.target.checked })
-                  }
-                />
-                Visible to client
-              </label>
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" disabled={!isAdmin || saving}>
-                {saving ? "Saving..." : editing ? "Save changes" : "Create service"}
-              </Button>
-              {editing ? (
-                <Button type="button" variant="secondary" onClick={resetForm}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </form>
-        </Panel>
       </div>
     </div>
   );
-}
-
-export function formatPricingType(type: PricingType | string) {
-  return type.replaceAll("_", " ");
-}
-
-export function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
 }

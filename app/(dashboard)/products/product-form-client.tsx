@@ -1,0 +1,226 @@
+"use client";
+
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/app/lib/supabase";
+import type { Tables } from "@/app/types/database.types";
+import {
+  Button,
+  ErrorBanner,
+  Field,
+  inputClassName,
+  LoadingState,
+  Panel,
+  textAreaClassName,
+} from "@/app/components/wms-ui";
+
+type Client = Pick<Tables<"clients">, "id" | "company_name">;
+type Product = Tables<"products">;
+type ProductForm = {
+  client_id: string;
+  product_name: string;
+  sku: string;
+  fnsku: string;
+  asin: string;
+  barcode: string;
+  barcode_type: string;
+  photo_url: string;
+  notes: string;
+  active: boolean;
+};
+
+const emptyForm: ProductForm = {
+  client_id: "",
+  product_name: "",
+  sku: "",
+  fnsku: "",
+  asin: "",
+  barcode: "",
+  barcode_type: "",
+  photo_url: "",
+  notes: "",
+  active: true,
+};
+
+export function ProductFormClient({ productId }: { productId?: string }) {
+  const router = useRouter();
+  const [clients, setClients] = useState<Client[]>([]);
+  const [form, setForm] = useState<ProductForm>(emptyForm);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    const [clientsResult, productResult] = await Promise.all([
+      supabase
+        .from("clients")
+        .select("id, company_name")
+        .is("deleted_at", null)
+        .order("company_name"),
+      productId
+        ? supabase
+          .from("products")
+          .select("*")
+          .eq("id", productId)
+          .is("deleted_at", null)
+          .single()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+
+    if (clientsResult.error) {
+      setError(clientsResult.error.message);
+    } else {
+      setClients(clientsResult.data ?? []);
+    }
+
+    if (productResult.error) {
+      setError(productResult.error.message);
+    } else if (productResult.data) {
+      const product = productResult.data as Product;
+      setForm({
+        client_id: product.client_id,
+        product_name: product.product_name,
+        sku: product.sku ?? "",
+        fnsku: product.fnsku ?? "",
+        asin: product.asin ?? "",
+        barcode: product.barcode ?? "",
+        barcode_type: product.barcode_type ?? "",
+        photo_url: product.photo_url ?? "",
+        notes: product.notes ?? "",
+        active: product.active,
+      });
+    }
+
+    setLoading(false);
+  }, [productId]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadInitialData() {
+      await Promise.resolve();
+      if (active) {
+        await loadData();
+      }
+    }
+
+    void loadInitialData();
+
+    return () => {
+      active = false;
+    };
+  }, [loadData]);
+
+  async function saveProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+
+    if (!form.client_id || !form.product_name.trim()) {
+      setError("Client and product name are required.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    const payload = {
+      client_id: form.client_id,
+      product_name: form.product_name.trim(),
+      sku: form.sku.trim() || null,
+      fnsku: form.fnsku.trim() || null,
+      asin: form.asin.trim() || null,
+      barcode: form.barcode.trim() || null,
+      barcode_type: form.barcode_type.trim() || null,
+      photo_url: form.photo_url.trim() || null,
+      notes: form.notes.trim() || null,
+      active: form.active,
+    };
+
+    const result = productId
+      ? await supabase.from("products").update(payload).eq("id", productId)
+      : await supabase.from("products").insert(payload);
+
+    if (result.error) {
+      setError(result.error.message);
+      setSaving(false);
+      return;
+    }
+
+    router.push("/products");
+    router.refresh();
+  }
+
+  if (loading) {
+    return <LoadingState label="Loading product..." />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex justify-end">
+        <Link
+          href="/products"
+          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          Back to products
+        </Link>
+      </div>
+      <ErrorBanner message={error} />
+      <Panel title={productId ? "Edit product" : "Add product"}>
+        <form className="grid gap-4 lg:grid-cols-2" onSubmit={(event) => void saveProduct(event)}>
+          <Field label="Client">
+            <select className={inputClassName} required value={form.client_id} onChange={(event) => setForm({ ...form, client_id: event.target.value })}>
+              <option value="">Select client</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.company_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Product name">
+            <input className={inputClassName} required value={form.product_name} onChange={(event) => setForm({ ...form, product_name: event.target.value })} />
+          </Field>
+          <Field label="SKU">
+            <input className={inputClassName} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
+          </Field>
+          <Field label="FNSKU">
+            <input className={inputClassName} value={form.fnsku} onChange={(event) => setForm({ ...form, fnsku: event.target.value })} />
+          </Field>
+          <Field label="ASIN">
+            <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
+          </Field>
+          <Field label="Barcode">
+            <input className={inputClassName} value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} />
+          </Field>
+          <Field label="Barcode type">
+            <input className={inputClassName} placeholder="Code 128, UPC, QR" value={form.barcode_type} onChange={(event) => setForm({ ...form, barcode_type: event.target.value })} />
+          </Field>
+          <Field label="Photo URL">
+            <input className={inputClassName} value={form.photo_url} onChange={(event) => setForm({ ...form, photo_url: event.target.value })} />
+          </Field>
+          <div className="lg:col-span-2">
+            <Field label="Notes">
+              <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 lg:col-span-2">
+            <input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />
+            Active product
+          </label>
+          <div className="flex gap-2 lg:col-span-2">
+            <Button type="submit" disabled={saving || clients.length === 0}>
+              {saving ? "Saving..." : "Save product"}
+            </Button>
+            <Link href="/products" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+              Cancel
+            </Link>
+          </div>
+        </form>
+      </Panel>
+    </div>
+  );
+}

@@ -16,7 +16,7 @@ import {
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
-import { formatMoney, formatPricingType } from "../services/services-client";
+import { formatMoney, formatPricingType } from "../services/service-form-client";
 import { ActivityTimeline } from "@/app/components/activity-timeline";
 import {
   hasMissingBoxLabels,

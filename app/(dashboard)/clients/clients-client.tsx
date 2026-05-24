@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
@@ -8,46 +9,19 @@ import {
   Button,
   EmptyState,
   ErrorBanner,
-  Field,
-  inputClassName,
   LoadingState,
   Panel,
   StatusBadge,
-  textAreaClassName,
 } from "@/app/components/wms-ui";
 
 type Client = Tables<"clients">;
-type ClientForm = {
-  company_name: string;
-  contact_name: string;
-  email: string;
-  phone: string;
-  telegram: string;
-  status: string;
-  login_status: Client["login_status"];
-  notes: string;
-};
-
-const emptyForm: ClientForm = {
-  company_name: "",
-  contact_name: "",
-  email: "",
-  phone: "",
-  telegram: "",
-  status: "active",
-  login_status: "no login",
-  notes: "",
-};
 
 const inviteCooldownMs = 60_000;
 
 export function ClientsClient() {
   const { session } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
-  const [form, setForm] = useState<ClientForm>(emptyForm);
-  const [editing, setEditing] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [creatingAccessId, setCreatingAccessId] = useState<string | null>(null);
   const [inviteCooldowns, setInviteCooldowns] = useState<Record<string, number>>({});
   const [now, setNow] = useState(() => Date.now());
@@ -100,64 +74,6 @@ export function ClientsClient() {
       active = false;
     };
   }, [loadClients]);
-
-  function startEdit(client: Client) {
-    setEditing(client);
-    setForm({
-      company_name: client.company_name,
-      contact_name: client.contact_name,
-      email: client.email,
-      phone: client.phone ?? "",
-      telegram: client.telegram ?? "",
-      status: client.status,
-      login_status: client.login_status,
-      notes: client.notes ?? "",
-    });
-  }
-
-  function resetForm() {
-    setEditing(null);
-    setForm(emptyForm);
-  }
-
-  async function saveClient(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving) {
-      return;
-    }
-
-    if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
-      setError("Company, contact, and email are required.");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-
-    const payload = {
-      company_name: form.company_name.trim(),
-      contact_name: form.contact_name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim() || null,
-      telegram: form.telegram.trim() || null,
-      status: form.status.trim() || "active",
-      login_status: form.login_status,
-      notes: form.notes.trim() || null,
-    };
-
-    const result = editing
-      ? await supabase.from("clients").update(payload).eq("id", editing.id)
-      : await supabase.from("clients").insert(payload);
-
-    if (result.error) {
-      setError(result.error.message);
-    } else {
-      resetForm();
-      await loadClients();
-    }
-
-    setSaving(false);
-  }
 
   async function deleteClient(client: Client) {
     if (!window.confirm(`Delete ${client.company_name}?`)) {
@@ -238,9 +154,16 @@ export function ClientsClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="xl:col-span-2">
+      <div className="space-y-5">
+        <div className="flex items-center justify-between gap-3">
           <StatusBadge tone="emerald">{activeCount} active</StatusBadge>
+          <Link
+            href="/clients/new"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+          >
+            <span className="mr-2 text-base leading-none">+</span>
+            Add Client
+          </Link>
         </div>
         <Panel title="Client records" description="Real records from Supabase.">
           {loading ? (
@@ -278,9 +201,12 @@ export function ClientsClient() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary" onClick={() => startEdit(client)}>
+                          <Link
+                            href={`/clients/${client.id}/edit`}
+                            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
                             Edit
-                          </Button>
+                          </Link>
                           {client.login_status === "no login" ? (
                             <InviteButton
                               clientId={client.id}
@@ -313,133 +239,6 @@ export function ClientsClient() {
               </table>
             </div>
           )}
-        </Panel>
-
-        <Panel title={editing ? "Edit client" : "Create client"}>
-          <form className="space-y-4" onSubmit={(event) => void saveClient(event)}>
-            <Field label="Company name">
-              <input
-                className={inputClassName}
-                required
-                value={form.company_name}
-                onChange={(event) => setForm({ ...form, company_name: event.target.value })}
-              />
-            </Field>
-            <Field label="Contact name">
-              <input
-                className={inputClassName}
-                required
-                value={form.contact_name}
-                onChange={(event) => setForm({ ...form, contact_name: event.target.value })}
-              />
-            </Field>
-            <Field label="Email">
-              <input
-                className={inputClassName}
-                required
-                type="email"
-                value={form.email}
-                onChange={(event) => setForm({ ...form, email: event.target.value })}
-              />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-              <Field label="Phone">
-                <input
-                  className={inputClassName}
-                  value={form.phone}
-                  onChange={(event) => setForm({ ...form, phone: event.target.value })}
-                />
-              </Field>
-              <Field label="Telegram">
-                <input
-                  className={inputClassName}
-                  value={form.telegram}
-                  onChange={(event) => setForm({ ...form, telegram: event.target.value })}
-                />
-              </Field>
-            </div>
-            <Field label="Status">
-              <select
-                className={inputClassName}
-                value={form.status}
-                onChange={(event) => setForm({ ...form, status: event.target.value })}
-              >
-                <option value="active">active</option>
-                <option value="onboarding">onboarding</option>
-                <option value="paused">paused</option>
-                <option value="inactive">inactive</option>
-              </select>
-            </Field>
-            <Field label="Login status">
-              <select
-                className={inputClassName}
-                value={form.login_status}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    login_status: event.target.value as Client["login_status"],
-                  })
-                }
-              >
-                <option value="no login">no login</option>
-                <option value="invited">invited</option>
-                <option value="active">active</option>
-              </select>
-            </Field>
-            <Field label="Notes">
-              <textarea
-                className={textAreaClassName}
-                value={form.notes}
-                onChange={(event) => setForm({ ...form, notes: event.target.value })}
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button type="submit" disabled={saving}>
-                {saving ? "Saving..." : editing ? "Save changes" : "Create client"}
-              </Button>
-              {editing ? (
-                <Button type="button" variant="secondary" onClick={resetForm}>
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          </form>
-          {editing ? (
-            <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-blue-950">Client portal access</p>
-                  <p className="mt-1 text-sm text-blue-700">
-                    Send an invite and link this client to a Supabase Auth user.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {editing.login_status === "no login" ? (
-                    <InviteButton
-                      clientId={editing.id}
-                      cooldowns={inviteCooldowns}
-                      label="Create Login Access"
-                      loadingLabel="Creating..."
-                      loading={creatingAccessId === editing.id}
-                      now={now}
-                      onClick={() => void createLoginAccess(editing)}
-                    />
-                  ) : null}
-                  {editing.login_status === "invited" || editing.login_status === "active" ? (
-                    <InviteButton
-                      clientId={editing.id}
-                      cooldowns={inviteCooldowns}
-                      label="Resend Invite"
-                      loadingLabel="Sending..."
-                      loading={creatingAccessId === editing.id}
-                      now={now}
-                      onClick={() => void createLoginAccess(editing, "resend")}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
         </Panel>
       </div>
       {onboardingMessage || onboardingInstructions.length > 0 ? (
