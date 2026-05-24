@@ -22,10 +22,15 @@ type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
 type Shipment = Tables<"incoming_shipments"> & {
   incoming_items: Pick<
     Tables<"incoming_items">,
-    "id" | "product_id" | "expected_quantity" | "notes" | "inventory_posted_at"
+    "id" | "product_id" | "expected_quantity" | "notes" | "inventory_posted_at" | "tracking_box_id"
+  >[];
+  incoming_tracking_boxes: Pick<
+    Tables<"incoming_tracking_boxes">,
+    "id" | "tracking_number" | "status"
   >[];
 };
 type ShipmentLine = {
+  tracking_number: string;
   product_id: string;
   expected_quantity: string;
   notes: string;
@@ -42,6 +47,7 @@ type ShipmentForm = {
 };
 
 const emptyLine: ShipmentLine = {
+  tracking_number: "",
   product_id: "",
   expected_quantity: "1",
   notes: "",
@@ -101,7 +107,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const shipmentQuery = shipmentId
       ? supabase
         .from("incoming_shipments")
-        .select("*, incoming_items(id, product_id, expected_quantity, notes, inventory_posted_at)")
+        .select("*, incoming_items(id, product_id, expected_quantity, notes, inventory_posted_at, tracking_box_id), incoming_tracking_boxes(id, tracking_number, status)")
         .eq("id", shipmentId)
         .is("deleted_at", null)
         .single()
@@ -136,6 +142,11 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       const lines = shipment.incoming_items
         .filter((item) => !("deleted_at" in item))
         .map((item) => ({
+          tracking_number:
+            shipment.incoming_tracking_boxes.find((box) => box.id === item.tracking_box_id)
+              ?.tracking_number ??
+            shipment.tracking_numbers[0] ??
+            "",
           product_id: item.product_id,
           expected_quantity: String(item.expected_quantity),
           notes: item.notes ?? "",
@@ -268,9 +279,38 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         }
       }
 
+      const trackingNumbers = Array.from(
+        new Set([
+          ...shipmentPayload.tracking_numbers,
+          ...validLines.map((line) => line.tracking_number.trim()).filter(Boolean),
+        ]),
+      );
+      const { data: boxes, error: boxesError } = await supabase
+        .from("incoming_tracking_boxes")
+        .upsert(
+          trackingNumbers.map((trackingNumber) => ({
+            shipment_id: shipmentResult.data.id,
+            tracking_number: trackingNumber,
+            carrier: form.carrier.trim(),
+          })),
+          { onConflict: "shipment_id,tracking_number" },
+        )
+        .select("id, tracking_number");
+
+      if (boxesError) {
+        setError(boxesError.message);
+        setSaving(false);
+        return;
+      }
+
+      const boxesByTracking = new Map((boxes ?? []).map((box) => [box.tracking_number, box.id]));
+      const fallbackBoxId = boxes?.[0]?.id ?? null;
+
       const { error: itemsError } = await supabase.from("incoming_items").insert(
         validLines.map((line) => ({
           shipment_id: shipmentResult.data.id,
+          tracking_box_id:
+            boxesByTracking.get(line.tracking_number.trim()) ?? fallbackBoxId,
           product_id: line.product_id,
           expected_quantity: Number(line.expected_quantity) || 0,
           notes: line.notes.trim() || null,
@@ -366,6 +406,20 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                         {product.product_name}{product.sku ? ` (${product.sku})` : ""}
                       </option>
                     ))}
+                  </select>
+                </Field>
+                <Field label="Tracking">
+                  <select className={inputClassName} disabled={hasPostedItems} value={line.tracking_number} onChange={(event) => updateLine(index, { ...line, tracking_number: event.target.value })}>
+                    <option value="">Use first tracking</option>
+                    {form.tracking_numbers
+                      .split(/[\n,]+/)
+                      .map((value) => value.trim())
+                      .filter(Boolean)
+                      .map((trackingNumber) => (
+                        <option key={trackingNumber} value={trackingNumber}>
+                          {trackingNumber}
+                        </option>
+                      ))}
                   </select>
                 </Field>
                 <Field label="Expected">

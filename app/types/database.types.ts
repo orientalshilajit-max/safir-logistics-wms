@@ -299,11 +299,13 @@ export type Database = {
           expected_quantity: number;
           id: string;
           inventory_posted_at: string | null;
+          is_unexpected: boolean;
           missing_quantity: number;
           notes: string | null;
           product_id: string;
           received_quantity: number;
           shipment_id: string;
+          tracking_box_id: string | null;
           updated_at: string;
         };
         Insert: {
@@ -313,11 +315,13 @@ export type Database = {
           expected_quantity: number;
           id?: string;
           inventory_posted_at?: string | null;
+          is_unexpected?: boolean;
           missing_quantity?: number;
           notes?: string | null;
           product_id: string;
           received_quantity?: number;
           shipment_id: string;
+          tracking_box_id?: string | null;
           updated_at?: string;
         };
         Update: {
@@ -327,11 +331,13 @@ export type Database = {
           expected_quantity?: number;
           id?: string;
           inventory_posted_at?: string | null;
+          is_unexpected?: boolean;
           missing_quantity?: number;
           notes?: string | null;
           product_id?: string;
           received_quantity?: number;
           shipment_id?: string;
+          tracking_box_id?: string | null;
           updated_at?: string;
         };
         Relationships: [
@@ -344,6 +350,60 @@ export type Database = {
           },
           {
             foreignKeyName: "incoming_items_shipment_id_fkey";
+            columns: ["shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "incoming_shipments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "incoming_items_tracking_box_id_fkey";
+            columns: ["tracking_box_id"];
+            isOneToOne: false;
+            referencedRelation: "incoming_tracking_boxes";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      incoming_tracking_boxes: {
+        Row: {
+          carrier: string | null;
+          created_at: string;
+          deleted_at: string | null;
+          id: string;
+          inventory_posted_at: string | null;
+          issue_notes: string | null;
+          shipment_id: string;
+          status: "In Transit" | "Delivered" | "Received" | "Issue";
+          tracking_number: string;
+          updated_at: string;
+        };
+        Insert: {
+          carrier?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          inventory_posted_at?: string | null;
+          issue_notes?: string | null;
+          shipment_id: string;
+          status?: "In Transit" | "Delivered" | "Received" | "Issue";
+          tracking_number: string;
+          updated_at?: string;
+        };
+        Update: {
+          carrier?: string | null;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          inventory_posted_at?: string | null;
+          issue_notes?: string | null;
+          shipment_id?: string;
+          status?: "In Transit" | "Delivered" | "Received" | "Issue";
+          tracking_number?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "incoming_tracking_boxes_shipment_id_fkey";
             columns: ["shipment_id"];
             isOneToOne: false;
             referencedRelation: "incoming_shipments";
@@ -1499,6 +1559,14 @@ export type Database = {
           p_damaged_quantity?: number;
           p_missing_quantity?: number;
         };
+        Returns: undefined;
+      };
+      post_incoming_tracking_box_to_inventory: {
+        Args: { p_tracking_box_id: string };
+        Returns: undefined;
+      };
+      sync_incoming_shipment_receiving_status: {
+        Args: { p_shipment_id: string };
         Returns: undefined;
       };
       reserve_inventory_for_request_item: {

@@ -1,4 +1,4 @@
-import { IncomingShipmentFormClient } from "../../incoming-shipment-form-client";
+import { ShipmentDetailClient } from "../../shipment-detail-client";
 
 export default async function EditIncomingShipmentPage({
   params,
@@ -7,5 +7,5 @@ export default async function EditIncomingShipmentPage({
 }) {
   const { id } = await params;
 
-  return <IncomingShipmentFormClient shipmentId={id} />;
+  return <ShipmentDetailClient shipmentId={id} />;
 }
