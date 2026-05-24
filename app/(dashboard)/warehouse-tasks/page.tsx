@@ -1,5 +1,5 @@
-import { WarehouseTasksClient } from "./warehouse-tasks-client";
+import { redirect } from "next/navigation";
 
 export default function WarehouseTasksPage() {
-  return <WarehouseTasksClient />;
+  redirect("/requests");
 }

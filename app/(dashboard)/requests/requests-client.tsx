@@ -24,15 +24,14 @@ type ServiceRequest = Tables<"service_requests"> & {
 const requestStatuses: ServiceRequest["status"][] = [
   "Draft",
   "Submitted",
-  "Pending Approval",
   "Approved",
-  "Prep in Progress",
+  "In Progress",
+  "Waiting Labels",
   "Ready to Ship",
   "Shipped",
   "Completed",
-  "On Hold",
-  "Need Client Action",
-  "Rejected",
+  "Issue / On Hold",
+  "Cancelled",
 ];
 
 export function RequestsClient() {
@@ -82,7 +81,8 @@ export function RequestsClient() {
     const normalized = query.trim().toLowerCase();
 
     return requests.filter((request) => {
-      const matchesStatus = statusFilter === "all" || request.status === statusFilter;
+      const matchesStatus =
+        statusFilter === "all" || normalizeRequestStatus(request.status) === statusFilter;
       const matchesQuery =
         !normalized ||
         request.request_number.toLowerCase().includes(normalized) ||
@@ -99,7 +99,7 @@ export function RequestsClient() {
   ) {
     if (updatingStatusId) return;
 
-    const destructive = ["Rejected", "Completed", "On Hold"].includes(status);
+    const destructive = ["Cancelled", "Completed", "Issue / On Hold"].includes(status);
     if (destructive && !window.confirm(`Move ${request.request_number} to ${status}?`)) {
       return;
     }
@@ -197,7 +197,7 @@ export function RequestsClient() {
 
       <Panel title={isClientPortal ? "My requests" : "Requests"}>
         <div className="mb-4 flex flex-wrap gap-2">
-          {(["all", "Pending Approval", "Approved", "Prep in Progress", "Ready to Ship", "Completed"] as const).map(
+          {(["all", "Submitted", "Approved", "In Progress", "Ready to Ship", "Completed"] as const).map(
             (status) => (
               <QuickFilterButton
                 key={status}
@@ -275,7 +275,7 @@ export function RequestsClient() {
                       {getRequestServiceType(request.notes)}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge tone={statusTone(request.status)}>{request.status}</StatusBadge>
+                      <StatusBadge tone={statusTone(request.status)}>{normalizeRequestStatus(request.status)}</StatusBadge>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {new Date(request.created_at).toLocaleDateString()}
@@ -367,33 +367,33 @@ function RequestActions({
     actions = isAdmin
       ? [
           button("Approve", "Approved"),
-          button("Decline", "Rejected", "danger"),
-          button("Request changes", "Need Client Action"),
+          button("Decline", "Cancelled", "danger"),
+          button("Request changes", "Issue / On Hold"),
           editLink,
         ]
       : [viewLink, editLink];
   } else if (request.status === "Approved") {
     actions = isAdmin
-      ? [editLink, button("Start processing", "Prep in Progress"), button("Cancel", "Rejected", "danger")]
+      ? [editLink, button("Start processing", "In Progress"), button("Cancel", "Cancelled", "danger")]
       : [viewLink];
-  } else if (request.status === "Prep in Progress" || request.status === "Ready for Prep" || request.status === "QC Check" || request.status === "Packing") {
+  } else if (normalizeRequestStatus(request.status) === "In Progress") {
     actions = isAdmin
-      ? [editLink, button("Ready to ship", "Ready to Ship"), button("On hold", "On Hold")]
+      ? [editLink, button("Ready to ship", "Ready to Ship"), button("Issue / On hold", "Issue / On Hold")]
       : [viewLink];
   } else if (request.status === "Ready to Ship") {
-    actions = isAdmin ? [editLink, button("Mark shipped", "Shipped"), button("On hold", "On Hold")] : [viewLink];
+    actions = isAdmin ? [editLink, button("Mark shipped", "Shipped"), button("Issue / On hold", "Issue / On Hold")] : [viewLink];
   } else if (request.status === "Shipped") {
     actions = isAdmin ? [viewLink, button("Complete", "Completed")] : [viewLink];
   } else if (request.status === "Completed") {
     actions = isAdmin ? [viewLink, editLink] : [viewLink];
-  } else if (request.status === "Rejected") {
-    actions = isAdmin ? [viewLink, button("Reopen", "Pending Approval")] : [viewLink];
-  } else if (request.status === "On Hold") {
+  } else if (normalizeRequestStatus(request.status) === "Cancelled") {
+    actions = isAdmin ? [viewLink, button("Reopen", "Submitted")] : [viewLink];
+  } else if (normalizeRequestStatus(request.status) === "Issue / On Hold") {
     actions = isAdmin
-      ? [editLink, button("Resume", "Prep in Progress"), button("Cancel", "Rejected", "danger")]
+      ? [editLink, button("Resume", "In Progress"), button("Cancel", "Cancelled", "danger")]
       : [viewLink];
   } else if (request.status === "Need Client Action") {
-    actions = [editLink, ...(isAdmin ? [button("Reopen", "Pending Approval")] : [])];
+    actions = [editLink, ...(isAdmin ? [button("Reopen", "Submitted")] : [])];
   }
 
   return <div className="flex flex-wrap gap-2">{actions}</div>;
@@ -425,21 +425,40 @@ function getRequestServiceType(notes: string | null) {
 }
 
 function statusTone(status: ServiceRequest["status"]) {
-  if (status === "Approved" || status === "Completed" || status === "Shipped" || status === "Labels Uploaded") {
+  const normalized = normalizeRequestStatus(status);
+
+  if (normalized === "Approved" || normalized === "Completed" || normalized === "Shipped") {
     return "emerald";
   }
 
-  if (status === "Rejected" || status === "On Hold" || status === "Need Client Action") {
+  if (normalized === "Cancelled" || normalized === "Issue / On Hold") {
     return "rose";
   }
 
-  if (status === "Pending Approval" || status === "Waiting Labels") {
+  if (normalized === "Submitted" || normalized === "Waiting Labels") {
     return "amber";
   }
 
-  if (status === "Ready to Pack" || status === "Ready to Ship") {
+  if (normalized === "Ready to Ship") {
     return "cyan";
   }
 
   return "blue";
+}
+
+function normalizeRequestStatus(status: ServiceRequest["status"]) {
+  if (status === "Pending Approval") return "Submitted";
+  if (
+    status === "Prep in Progress" ||
+    status === "Ready for Prep" ||
+    status === "QC Check" ||
+    status === "Packing" ||
+    status === "Ready to Pack"
+  ) {
+    return "In Progress";
+  }
+  if (status === "On Hold" || status === "Need Client Action") return "Issue / On Hold";
+  if (status === "Rejected") return "Cancelled";
+
+  return status;
 }

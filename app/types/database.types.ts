@@ -1059,7 +1059,9 @@ export type Database = {
             | "Submitted"
             | "Pending Approval"
             | "Approved"
+            | "In Progress"
             | "Rejected"
+            | "Cancelled"
             | "Waiting Labels"
             | "Labels Uploaded"
             | "Ready to Pack"
@@ -1070,6 +1072,7 @@ export type Database = {
             | "Ready to Ship"
             | "Shipped"
             | "Completed"
+            | "Issue / On Hold"
             | "On Hold"
             | "Need Client Action";
           submitted_at: string | null;
@@ -1096,7 +1099,9 @@ export type Database = {
             | "Submitted"
             | "Pending Approval"
             | "Approved"
+            | "In Progress"
             | "Rejected"
+            | "Cancelled"
             | "Waiting Labels"
             | "Labels Uploaded"
             | "Ready to Pack"
@@ -1107,6 +1112,7 @@ export type Database = {
             | "Ready to Ship"
             | "Shipped"
             | "Completed"
+            | "Issue / On Hold"
             | "On Hold"
             | "Need Client Action";
           submitted_at?: string | null;
@@ -1133,7 +1139,9 @@ export type Database = {
             | "Submitted"
             | "Pending Approval"
             | "Approved"
+            | "In Progress"
             | "Rejected"
+            | "Cancelled"
             | "Waiting Labels"
             | "Labels Uploaded"
             | "Ready to Pack"
@@ -1144,6 +1152,7 @@ export type Database = {
             | "Ready to Ship"
             | "Shipped"
             | "Completed"
+            | "Issue / On Hold"
             | "On Hold"
             | "Need Client Action";
           submitted_at?: string | null;

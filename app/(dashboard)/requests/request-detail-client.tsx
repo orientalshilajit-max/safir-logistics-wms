@@ -88,8 +88,8 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
     if (!request || updatingStatus) return;
 
     if (
-      ["Rejected", "Completed", "On Hold"].includes(status) &&
-      !window.confirm(`Move ${request.request_number} to ${status}?`)
+      ["Cancelled", "Completed", "Issue / On Hold"].includes(status) &&
+      !window.confirm(`Move ${request.request_number} to ${normalizeRequestStatus(status)}?`)
     ) {
       return;
     }
@@ -103,7 +103,7 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
       .update({
         status,
         approved_at: status === "Approved" ? now : request.approved_at,
-        rejected_at: status === "Rejected" ? now : request.rejected_at,
+        rejected_at: status === "Cancelled" ? now : request.rejected_at,
       })
       .eq("id", request.id);
 
@@ -131,7 +131,7 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge tone={statusTone(request.status)}>{request.status}</StatusBadge>
+          <StatusBadge tone={statusTone(request.status)}>{normalizeRequestStatus(request.status)}</StatusBadge>
           {missingLabels ? <StatusBadge tone="amber">Missing labels</StatusBadge> : null}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -141,7 +141,7 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
           >
             Back
           </Link>
-          {(isAdmin || ["Draft", "Submitted", "Need Client Action"].includes(request.status)) ? (
+          {(isAdmin || ["Draft", "Submitted", "Need Client Action", "Issue / On Hold"].includes(request.status)) ? (
             <Link
               className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
               href={`/requests/${request.id}/edit`}
@@ -222,25 +222,25 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
                 <Button
                   disabled={updatingStatus}
                   variant="danger"
-                  onClick={() => void updateStatus("Rejected")}
+                  onClick={() => void updateStatus("Cancelled")}
                 >
                   Decline
                 </Button>
                 <Button
                   disabled={updatingStatus}
                   variant="secondary"
-                  onClick={() => void updateStatus("Need Client Action")}
+                  onClick={() => void updateStatus("Issue / On Hold")}
                 >
                   Request changes
                 </Button>
               </>
             ) : null}
             {request.status === "Approved" ? (
-              <Button disabled={updatingStatus} onClick={() => void updateStatus("Prep in Progress")}>
+              <Button disabled={updatingStatus} onClick={() => void updateStatus("In Progress")}>
                 Start processing
               </Button>
             ) : null}
-            {request.status === "Prep in Progress" || request.status === "Ready for Prep" || request.status === "QC Check" || request.status === "Packing" ? (
+            {normalizeRequestStatus(request.status) === "In Progress" ? (
               <Button disabled={updatingStatus} onClick={() => void updateStatus("Ready to Ship")}>
                 Mark ready to ship
               </Button>
@@ -255,8 +255,8 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
                 Complete
               </Button>
             ) : null}
-            {request.status === "On Hold" ? (
-              <Button disabled={updatingStatus} onClick={() => void updateStatus("Prep in Progress")}>
+            {normalizeRequestStatus(request.status) === "Issue / On Hold" ? (
+              <Button disabled={updatingStatus} onClick={() => void updateStatus("In Progress")}>
                 Resume
               </Button>
             ) : null}
@@ -301,21 +301,40 @@ function getRequestServiceType(notes: string | null) {
 }
 
 function statusTone(status: ServiceRequest["status"]) {
-  if (status === "Approved" || status === "Completed" || status === "Shipped" || status === "Labels Uploaded") {
+  const normalized = normalizeRequestStatus(status);
+
+  if (normalized === "Approved" || normalized === "Completed" || normalized === "Shipped") {
     return "emerald";
   }
 
-  if (status === "Rejected" || status === "On Hold" || status === "Need Client Action") {
+  if (normalized === "Cancelled" || normalized === "Issue / On Hold") {
     return "rose";
   }
 
-  if (status === "Pending Approval" || status === "Waiting Labels") {
+  if (normalized === "Submitted" || normalized === "Waiting Labels") {
     return "amber";
   }
 
-  if (status === "Ready to Pack" || status === "Ready to Ship") {
+  if (normalized === "Ready to Ship") {
     return "cyan";
   }
 
   return "blue";
+}
+
+function normalizeRequestStatus(status: ServiceRequest["status"]) {
+  if (status === "Pending Approval") return "Submitted";
+  if (
+    status === "Prep in Progress" ||
+    status === "Ready for Prep" ||
+    status === "QC Check" ||
+    status === "Packing" ||
+    status === "Ready to Pack"
+  ) {
+    return "In Progress";
+  }
+  if (status === "On Hold" || status === "Need Client Action") return "Issue / On Hold";
+  if (status === "Rejected") return "Cancelled";
+
+  return status;
 }

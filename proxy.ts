@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AUTH_TOKEN_COOKIE } from "@/app/lib/auth";
 
 const warehouseRestrictedPaths = [
-  "/documents",
   "/invoices",
   "/client-pricing-overrides",
   "/settings",
@@ -14,7 +13,6 @@ const clientRestrictedPaths = [
   "/reports",
   "/settings",
   "/client-pricing-overrides",
-  "/warehouse-tasks",
   "/products",
   "/outbound-shipments",
 ];
@@ -42,7 +40,7 @@ export function proxy(request: NextRequest) {
       role === "warehouse_operator" &&
       warehouseRestrictedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))
     ) {
-      return NextResponse.redirect(new URL("/warehouse-tasks", request.url));
+      return NextResponse.redirect(new URL("/requests", request.url));
     }
 
     if (
