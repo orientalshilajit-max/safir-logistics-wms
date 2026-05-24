@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
+import { ClientDocumentsSection } from "./client-documents-section";
 import {
   Button,
   ErrorBanner,
@@ -299,6 +300,7 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
           ) : null}
         </Panel>
       ) : null}
+      {client ? <ClientDocumentsSection clientId={client.id} /> : null}
     </div>
   );
 }

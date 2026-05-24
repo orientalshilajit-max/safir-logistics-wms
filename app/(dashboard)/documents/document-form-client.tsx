@@ -60,14 +60,20 @@ const emptyRelated: RelatedOptions = {
   invoices: [],
 };
 
-export function DocumentFormClient({ documentId }: { documentId?: string }) {
+export function DocumentFormClient({
+  documentId,
+  initialClientId = "",
+}: {
+  documentId?: string;
+  initialClientId?: string;
+}) {
   const router = useRouter();
   const { clientId, role, user } = useAuth();
   const isAdmin = role === "admin";
   const [clients, setClients] = useState<Client[]>([]);
   const [document, setDocument] = useState<DocumentFile | null>(null);
   const [related, setRelated] = useState<RelatedOptions>(emptyRelated);
-  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState(initialClientId);
   const [category, setCategory] = useState<DocumentCategory>("General");
   const [visibility, setVisibility] = useState<"internal" | "client">("client");
   const [note, setNote] = useState("");
@@ -294,7 +300,7 @@ export function DocumentFormClient({ documentId }: { documentId?: string }) {
       .from("documents")
       .createSignedUrl(storagePath, 60 * 60);
 
-    const uploadedByRole = isAdmin ? "admin" : role;
+    const uploadedByRole = isAdmin ? "admin" : "client";
 
     const { error: insertError } = await supabase.from("attachments").insert({
       ...metadata,
