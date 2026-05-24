@@ -1,5 +1,5 @@
-import { ReceivingQueueClient } from "@/app/(dashboard)/receiving-queue/receiving-queue-client";
+import { redirect } from "next/navigation";
 
 export default function ReceivingQueuePage() {
-  return <ReceivingQueueClient />;
+  redirect("/incoming-shipments?status=pending_receiving");
 }

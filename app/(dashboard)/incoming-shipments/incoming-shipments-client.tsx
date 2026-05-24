@@ -8,6 +8,7 @@ import {
   inputClassName,
   LoadingState,
   Panel,
+  QuickFilterButton,
   StatusBadge,
 } from "@/app/components/wms-ui";
 import { useAuth } from "@/app/auth/auth-provider";
@@ -44,15 +45,24 @@ const queueStatuses = new Set([
   "Issue",
 ]);
 
+const statusTabs = [
+  { label: "All", value: "all" },
+  { label: "In Transit", value: "In Transit" },
+  { label: "Pending Receiving", value: "Pending Receiving" },
+  { label: "Partially Received", value: "Partially Received" },
+  { label: "Received", value: "Received" },
+  { label: "Discrepancy / Issue", value: "discrepancy_issue" },
+];
+
 export function IncomingShipmentsClient({
-  receivingOnly = false,
+  initialStatus,
 }: {
-  receivingOnly?: boolean;
+  initialStatus?: string;
 }) {
   const { role, clientId } = useAuth();
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState(receivingOnly ? "queue" : "all");
+  const [statusFilter, setStatusFilter] = useState(() => normalizeStatusFilter(initialStatus));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
@@ -94,11 +104,12 @@ export function IncomingShipmentsClient({
 
     return shipments.filter((shipment) => {
       const statusName = getDisplayStatus(shipment);
-      const matchesQueue = !receivingOnly || queueStatuses.has(statusName);
       const matchesStatus =
-        statusFilter === "all" ||
-        statusFilter === "queue" ||
-        statusName === statusFilter;
+        statusFilter === "all"
+          ? true
+          : statusFilter === "discrepancy_issue"
+            ? statusName === "Received with Discrepancy" || statusName === "Issue"
+            : statusName === statusFilter;
       const matchesQuery =
         !normalized ||
         shipment.clients?.company_name.toLowerCase().includes(normalized) ||
@@ -108,24 +119,16 @@ export function IncomingShipmentsClient({
           tracking.toLowerCase().includes(normalized),
         );
 
-      return matchesQueue && matchesStatus && matchesQuery;
+      return matchesStatus && matchesQuery;
     });
-  }, [query, receivingOnly, shipments, statusFilter]);
-
-  const statusOptions = useMemo(
-    () =>
-      Array.from(new Set(shipments.map((shipment) => getDisplayStatus(shipment)))).sort(),
-    [shipments],
-  );
+  }, [query, shipments, statusFilter]);
 
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
       <div className="flex items-center justify-between gap-3">
-        <StatusBadge tone={receivingOnly ? "amber" : "blue"}>
-          {filteredShipments.length} {receivingOnly ? "in queue" : "shipments"}
-        </StatusBadge>
+        <StatusBadge tone="blue">{filteredShipments.length} shipments</StatusBadge>
         <Link
           href="/incoming-shipments/new"
           className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
@@ -135,40 +138,33 @@ export function IncomingShipmentsClient({
         </Link>
       </div>
 
-      <Panel title={receivingOnly ? "Receiving queue" : "Incoming shipments"}>
-        <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_14rem]">
+      <Panel title="Incoming shipments">
+        <div className="mb-4 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {statusTabs.map((tab) => (
+              <QuickFilterButton
+                key={tab.value}
+                active={statusFilter === tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+              >
+                {tab.label}
+              </QuickFilterButton>
+            ))}
+          </div>
           <input
             className={inputClassName}
             placeholder="Search client, shipment, carrier, or tracking"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <select
-            className={inputClassName}
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-          >
-            <option value={receivingOnly ? "queue" : "all"}>
-              {receivingOnly ? "Queue statuses" : "All statuses"}
-            </option>
-            {statusOptions.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
         </div>
 
         {loading ? (
           <LoadingState label="Loading shipments..." />
         ) : filteredShipments.length === 0 ? (
           <EmptyState
-            title={receivingOnly ? "No shipments waiting for receiving" : "No shipments found"}
-            body={
-              receivingOnly
-                ? "Delivered, partially received, discrepant, and issue shipments will appear here."
-                : "Add an incoming shipment or adjust the filters."
-            }
+            title="No shipments found"
+            body="Add an incoming shipment or adjust the filters."
           />
         ) : (
           <div className="max-h-[36rem] overflow-auto">
@@ -281,6 +277,15 @@ export function getDisplayStatus(shipment: Shipment) {
   }
 
   return statusName;
+}
+
+function normalizeStatusFilter(value?: string) {
+  if (value === "pending_receiving") return "Pending Receiving";
+  if (value === "partially_received") return "Partially Received";
+  if (value === "received") return "Received";
+  if (value === "in_transit") return "In Transit";
+  if (value === "discrepancy_issue" || value === "issue") return "discrepancy_issue";
+  return "all";
 }
 
 function statusTone(status: string) {

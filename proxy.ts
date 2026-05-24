@@ -15,7 +15,6 @@ const clientRestrictedPaths = [
   "/settings",
   "/client-pricing-overrides",
   "/warehouse-tasks",
-  "/receiving-queue",
   "/products",
   "/outbound-shipments",
 ];

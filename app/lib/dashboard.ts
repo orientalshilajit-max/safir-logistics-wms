@@ -17,14 +17,6 @@ export const dashboardRoutes: DashboardRoute[] = [
     status: "Live",
   },
   {
-    href: "/receiving-queue",
-    label: "Receiving Queue",
-    eyebrow: "Inbound",
-    title: "Receiving Queue",
-    description: "Track expected cartons, intake progress, and receiving exceptions.",
-    status: "Setup",
-  },
-  {
     href: "/products",
     label: "Products",
     eyebrow: "Catalog",
