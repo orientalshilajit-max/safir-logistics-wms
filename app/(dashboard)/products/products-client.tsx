@@ -22,7 +22,12 @@ type Product = Tables<"products"> & {
 type InventoryRow = Pick<Tables<"inventory">, "product_id" | "available_qty">;
 type IncomingProductLine = Pick<
   Tables<"incoming_items">,
-  "product_id" | "expected_quantity" | "received_quantity" | "is_unexpected" | "tracking_box_id"
+  | "inventory_posted_at"
+  | "product_id"
+  | "expected_quantity"
+  | "received_quantity"
+  | "is_unexpected"
+  | "tracking_box_id"
 > & {
   incoming_shipments: {
     number_of_boxes: number;
@@ -84,7 +89,7 @@ export function ProductsClient() {
       .is("deleted_at", null);
     const incomingQuery = supabase
       .from("incoming_items")
-      .select("product_id, expected_quantity, received_quantity, is_unexpected, tracking_box_id, incoming_shipments!inner(number_of_boxes, statuses(name))")
+      .select("inventory_posted_at, product_id, expected_quantity, received_quantity, is_unexpected, tracking_box_id, incoming_shipments!inner(number_of_boxes, statuses(name))")
       .is("deleted_at", null);
 
     if (isClientPortal && clientId) {
@@ -335,6 +340,7 @@ function getClientProductStatus(
     incomingLines.some(
       (line) =>
         line.is_unexpected ||
+        (line.inventory_posted_at && line.expected_quantity !== line.received_quantity) ||
         line.incoming_shipments?.statuses?.name === "Issue" ||
         line.incoming_shipments?.statuses?.name === "Received with Discrepancy",
     )

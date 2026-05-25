@@ -242,7 +242,7 @@ export function getShipmentSummary(shipment: Shipment) {
     shipment.incoming_items.filter(
       (item) =>
         item.is_unexpected ||
-        item.expected_quantity !== item.received_quantity ||
+        (item.inventory_posted_at && item.expected_quantity !== item.received_quantity) ||
         item.damaged_quantity > 0 ||
         item.missing_quantity > 0,
     ).length;

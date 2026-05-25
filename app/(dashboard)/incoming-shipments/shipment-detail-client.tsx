@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
@@ -14,26 +14,21 @@ import {
   LoadingState,
   Panel,
   StatusBadge,
-  textAreaClassName,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "product_name" | "sku">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
-type BoxStatus = Tables<"incoming_tracking_boxes">["status"];
+type TrackingBox = Tables<"incoming_tracking_boxes">;
 type ShipmentItem = Tables<"incoming_items"> & {
   products: Product | null;
 };
-type TrackingBox = Tables<"incoming_tracking_boxes"> & {
-  incoming_items: ShipmentItem[];
-};
 type Shipment = Tables<"incoming_shipments"> & {
   clients: Client | null;
-  statuses: Status | null;
+  incoming_items: ShipmentItem[];
   incoming_tracking_boxes: TrackingBox[];
+  statuses: Status | null;
 };
-
-const boxStatuses: BoxStatus[] = ["In Transit", "Delivered", "Received", "Issue"];
 type ItemDraft = {
   damaged: string;
   missing: string;
@@ -42,14 +37,14 @@ type ItemDraft = {
 };
 
 export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
-  const { role } = useAuth();
+  const { clientId, role } = useAuth();
   const isAdmin = role === "admin" || role === "warehouse_operator";
+  const isClientPortal = role === "client";
   const [shipment, setShipment] = useState<Shipment | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
-  const [boxDraft, setBoxDraft] = useState({ actual_received_boxes: "", notes: "" });
-  const [newLines, setNewLines] = useState<Record<string, { product_id: string; received: string; notes: string }>>({});
+  const [issueMode, setIssueMode] = useState<Record<string, boolean>>({});
+  const [actualBoxes, setActualBoxes] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,12 +54,17 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     setLoading(true);
     setError(null);
 
-    const { data, error: shipmentError } = await supabase
+    const query = supabase
       .from("incoming_shipments")
-      .select("*, clients(id, company_name), statuses(id, name, color), incoming_tracking_boxes(*, incoming_items(*, products(id, product_name, sku)))")
+      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(*, products(id, product_name, sku)), incoming_tracking_boxes(*)")
       .eq("id", shipmentId)
-      .is("deleted_at", null)
-      .single();
+      .is("deleted_at", null);
+
+    if (isClientPortal && clientId) {
+      query.eq("client_id", clientId);
+    }
+
+    const { data, error: shipmentError } = await query.single();
 
     if (shipmentError) {
       setError(shipmentError.message);
@@ -74,52 +74,44 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     }
 
     const loadedShipment = data as unknown as Shipment;
-    setShipment(loadedShipment);
+    const sortedItems = loadedShipment.incoming_items
+      .filter((item) => !item.deleted_at)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+    setShipment({ ...loadedShipment, incoming_items: sortedItems });
     setDrafts(
       Object.fromEntries(
-        loadedShipment.incoming_tracking_boxes.flatMap((box) =>
-          box.incoming_items.map((item) => [
+        sortedItems.map((item) => {
+          const received =
+            item.received_quantity === 0 && !item.inventory_posted_at
+              ? item.expected_quantity
+              : item.received_quantity;
+
+          return [
             item.id,
             {
               damaged: String(item.damaged_quantity),
               missing: String(item.missing_quantity),
               notes: item.notes ?? "",
-              received: item.received_quantity === 0 && !item.inventory_posted_at
-                ? ""
-                : String(item.received_quantity),
+              received: String(received),
             },
-          ]),
-        ),
+          ];
+        }),
       ),
     );
-    setBoxDraft({
-      actual_received_boxes: loadedShipment.actual_received_boxes === null
-        ? ""
-        : String(loadedShipment.actual_received_boxes),
-      notes: loadedShipment.notes ?? "",
-    });
-    setNewLines(
+    setIssueMode(
       Object.fromEntries(
-        loadedShipment.incoming_tracking_boxes.map((box) => [
-          box.id,
-          { product_id: "", received: "1", notes: "" },
+        sortedItems.map((item) => [
+          item.id,
+          hasItemIssue(item) ||
+            (loadedShipment.actual_received_boxes !== null &&
+              loadedShipment.actual_received_boxes !== loadedShipment.number_of_boxes),
         ]),
       ),
     );
-
-    const { data: productData, error: productError } = await supabase
-      .from("products")
-      .select("id, product_name, sku")
-      .eq("client_id", loadedShipment.client_id)
-      .is("deleted_at", null)
-      .eq("active", true)
-      .order("product_name");
-
-    if (productError) {
-      setError(productError.message);
-    } else {
-      setProducts(productData ?? []);
-    }
+    setActualBoxes(
+      String(loadedShipment.actual_received_boxes ?? loadedShipment.number_of_boxes),
+    );
 
     const { data: statusData, error: statusError } = await supabase
       .from("statuses")
@@ -136,7 +128,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     }
 
     setLoading(false);
-  }, [shipmentId]);
+  }, [clientId, isClientPortal, shipmentId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadShipment(), 0);
@@ -145,306 +137,238 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   }, [loadShipment]);
 
   const totals = useMemo(() => {
-    const items = shipment?.incoming_tracking_boxes.flatMap((box) => box.incoming_items) ?? [];
+    const items = shipment?.incoming_items ?? [];
     return {
       expected: items.reduce((sum, item) => sum + item.expected_quantity, 0),
-      received: items.reduce((sum, item) => sum + item.received_quantity, 0),
-      issues: items.filter((item) => getDifference(item) !== 0 || item.is_unexpected).length,
-      expectedBoxes: shipment?.number_of_boxes ?? 0,
-      actualBoxes: shipment?.actual_received_boxes ?? null,
+      received: items.reduce((sum, item) => sum + (item.received_quantity || item.expected_quantity), 0),
+      posted: items.filter((item) => item.inventory_posted_at).length,
+      rows: items.length,
     };
   }, [shipment]);
 
-  async function updateBoxStatus(box: TrackingBox, status: BoxStatus) {
-    if (!isAdmin || savingId) return;
-
-    setSavingId(`box-${box.id}`);
-    setError(null);
-
-    const { error: updateError } = await supabase
-      .from("incoming_tracking_boxes")
-      .update({ status })
-      .eq("id", box.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      await loadShipment();
-    }
-
-    setSavingId(null);
-  }
-
-  async function markShipmentStatus(statusName: "Arrived at Prep" | "Received" | "Issue") {
+  async function markArrivedAtPrep() {
     if (!shipment || !isAdmin || savingId) return;
 
-    const status = statuses.find((item) => item.name === statusName);
+    const arrivedStatus = statuses.find((status) => status.name === "Arrived at Prep");
 
-    if (!status) {
-      setError(`${statusName} status is not configured.`);
+    if (!arrivedStatus) {
+      setError("Arrived at Prep status is not configured.");
       return;
     }
 
-    setSavingId(`shipment-${statusName}`);
+    setSavingId("arrived");
     setError(null);
     setMessage(null);
 
-    const { error: updateError } = await supabase
+    const { error: shipmentError } = await supabase
       .from("incoming_shipments")
-      .update({ status_id: status.id })
+      .update({ status_id: arrivedStatus.id })
       .eq("id", shipment.id);
 
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      setMessage(`Shipment marked ${statusName}.`);
-      await loadShipment();
-    }
-
-    setSavingId(null);
-  }
-
-  async function saveShipmentReceivingDetails() {
-    if (!shipment || !isAdmin || savingId) return;
-
-    const actualBoxes =
-      boxDraft.actual_received_boxes.trim() === ""
-        ? null
-        : Number(boxDraft.actual_received_boxes);
-
-    if (actualBoxes !== null && (!Number.isInteger(actualBoxes) || actualBoxes < 0)) {
-      setError("Actual received boxes must be a whole number zero or greater.");
+    if (shipmentError) {
+      setError(shipmentError.message);
+      setSavingId(null);
       return;
     }
 
-    setSavingId("shipment-boxes");
-    setError(null);
-    setMessage(null);
-
-    const { error: updateError } = await supabase
-      .from("incoming_shipments")
-      .update({
-        actual_received_boxes: actualBoxes,
-        notes: boxDraft.notes.trim() || null,
-      })
-      .eq("id", shipment.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      setMessage("Receiving details saved.");
-      await loadShipment();
-      await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
-    }
-
-    setSavingId(null);
-  }
-
-  async function saveItem(item: ShipmentItem) {
-    if (!isAdmin || savingId || item.inventory_posted_at) return;
-
-    const draft = drafts[item.id];
-    const received =
-      draft?.received.trim() === ""
-        ? item.expected_quantity
-        : Number(draft?.received ?? item.received_quantity);
-    const damaged = Number(draft?.damaged ?? item.damaged_quantity);
-    const missing =
-      draft?.missing.trim() === ""
-        ? Math.max(item.expected_quantity - received, 0)
-        : Number(draft?.missing ?? item.missing_quantity);
-
-    if (
-      !Number.isInteger(received) ||
-      received < 0 ||
-      !Number.isInteger(damaged) ||
-      damaged < 0 ||
-      !Number.isInteger(missing) ||
-      missing < 0
-    ) {
-      setError("Actual, damaged, and missing quantities must be whole numbers zero or greater.");
-      return;
-    }
-
-    setSavingId(`item-${item.id}`);
-    setError(null);
-
-    const { error: updateError } = await supabase
-      .from("incoming_items")
-      .update({
-        damaged_quantity: damaged,
-        missing_quantity: missing,
-        received_quantity: received,
-        notes: draft?.notes.trim() || null,
-      })
-      .eq("id", item.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
-      await loadShipment();
-    }
-
-    setSavingId(null);
-  }
-
-  async function removeItem(item: ShipmentItem) {
-    if (!isAdmin || savingId || item.inventory_posted_at) return;
-    if (!window.confirm("Remove this product line?")) return;
-
-    setSavingId(`item-${item.id}`);
-    setError(null);
-
-    const { error: updateError } = await supabase
-      .from("incoming_items")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", item.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      await loadShipment();
-      await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
-    }
-
-    setSavingId(null);
-  }
-
-  async function addUnexpectedLine(event: FormEvent<HTMLFormElement>, box: TrackingBox) {
-    event.preventDefault();
-    if (!shipment || !isAdmin || savingId || box.inventory_posted_at) return;
-
-    const draft = newLines[box.id];
-    const received = Number(draft?.received ?? 0);
-
-    if (!draft?.product_id || !Number.isInteger(received) || received < 0) {
-      setError("Choose a product and enter a whole actual quantity.");
-      return;
-    }
-
-    setSavingId(`new-${box.id}`);
-    setError(null);
-
-    const { error: insertError } = await supabase.from("incoming_items").insert({
-      shipment_id: shipment.id,
-      tracking_box_id: box.id,
-      product_id: draft.product_id,
-      expected_quantity: 0,
-      received_quantity: received,
-      missing_quantity: 0,
-      notes: draft.notes.trim() || null,
-      is_unexpected: true,
-    });
-
-    if (insertError) {
-      setError(insertError.message);
-    } else {
-      await loadShipment();
-      await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
-    }
-
-    setSavingId(null);
-  }
-
-  async function postBoxToInventory(box: TrackingBox) {
-    if (!isAdmin || savingId || box.inventory_posted_at) return;
-
-    const normalizedItems = box.incoming_items.map((item) => {
-      const draft = drafts[item.id];
-      const received =
-        draft?.received.trim() === ""
-          ? item.expected_quantity
-          : Number(draft?.received ?? item.received_quantity);
-      const damaged = Number(draft?.damaged ?? item.damaged_quantity);
-      const missing =
-        draft?.missing.trim() === ""
-          ? Math.max(item.expected_quantity - received, 0)
-          : Number(draft?.missing ?? item.missing_quantity);
-
-      return { damaged, item, missing, received };
-    });
-
-    if (
-      normalizedItems.some(
-        ({ damaged, missing, received }) =>
-          !Number.isInteger(received) ||
-          received < 0 ||
-          !Number.isInteger(damaged) ||
-          damaged < 0 ||
-          !Number.isInteger(missing) ||
-          missing < 0,
-      )
-    ) {
-      setError("Actual, damaged, and missing quantities must be whole numbers zero or greater.");
-      return;
-    }
-
-    const actualBoxes =
-      boxDraft.actual_received_boxes.trim() === ""
-        ? shipment?.number_of_boxes ?? 0
-        : Number(boxDraft.actual_received_boxes);
-    const hasBoxDiscrepancy = shipment ? actualBoxes !== shipment.number_of_boxes : false;
-    const hasDiscrepancy = normalizedItems.some(
-      ({ damaged, item, missing, received }) =>
-        item.is_unexpected ||
-        received !== item.expected_quantity ||
-        damaged > 0 ||
-        missing > 0,
-    ) || hasBoxDiscrepancy;
-
-    if (hasDiscrepancy && !window.confirm("This shipment has a discrepancy. Post actual quantities to inventory?")) {
-      return;
-    }
-
-    setSavingId(`post-${box.id}`);
-    setError(null);
-    setMessage(null);
-
-    for (const { damaged, item, missing, received } of normalizedItems) {
-      const { error: itemError } = await supabase
-        .from("incoming_items")
-        .update({
-          damaged_quantity: damaged,
-          missing_quantity: missing,
-          received_quantity: received,
-          notes: drafts[item.id]?.notes.trim() || item.notes,
-        })
-        .eq("id", item.id)
+    if (shipment.incoming_tracking_boxes.length > 0) {
+      const { error: boxesError } = await supabase
+        .from("incoming_tracking_boxes")
+        .update({ status: "Delivered" })
+        .eq("shipment_id", shipment.id)
         .is("inventory_posted_at", null);
 
-      if (itemError) {
-        setError(itemError.message);
+      if (boxesError) {
+        setError(boxesError.message);
         setSavingId(null);
         return;
       }
     }
 
-    const { error: shipmentUpdateError } = await supabase
-      .from("incoming_shipments")
-      .update({
-        actual_received_boxes: actualBoxes,
-        notes: boxDraft.notes.trim() || shipment?.notes || null,
-      })
-      .eq("id", shipmentId);
+    setMessage("Shipment marked Arrived at Prep.");
+    await loadShipment();
+    setSavingId(null);
+  }
 
-    if (shipmentUpdateError) {
-      setError(shipmentUpdateError.message);
+  async function markIssue(item: ShipmentItem) {
+    if (!shipment || !isAdmin || savingId) return;
+
+    const issueStatus = statuses.find((status) => status.name === "Issue");
+
+    setIssueMode((current) => ({ ...current, [item.id]: true }));
+
+    if (!issueStatus) {
+      return;
+    }
+
+    setSavingId(`issue-${item.id}`);
+    setError(null);
+    setMessage(null);
+
+    const { error: updateError } = await supabase
+      .from("incoming_shipments")
+      .update({ status_id: issueStatus.id })
+      .eq("id", shipment.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setMessage("Shipment marked Issue.");
+      await loadShipment();
+    }
+
+    setSavingId(null);
+  }
+
+  async function saveRow(item: ShipmentItem) {
+    if (!shipment || !isAdmin || savingId || item.inventory_posted_at) return false;
+
+    const parsed = parseDraft(item, drafts[item.id], actualBoxes, shipment.number_of_boxes);
+
+    if (parsed.error) {
+      setError(parsed.error);
+      return false;
+    }
+
+    setSavingId(`save-${item.id}`);
+    setError(null);
+    setMessage(null);
+
+    const { error: shipmentError } = await supabase
+      .from("incoming_shipments")
+      .update({ actual_received_boxes: parsed.actualBoxes })
+      .eq("id", shipment.id);
+
+    if (shipmentError) {
+      setError(shipmentError.message);
+      setSavingId(null);
+      return false;
+    }
+
+    const { error: itemError } = await supabase
+      .from("incoming_items")
+      .update({
+        damaged_quantity: parsed.damaged,
+        missing_quantity: parsed.missing,
+        notes: parsed.notes,
+        received_quantity: parsed.received,
+      })
+      .eq("id", item.id)
+      .is("inventory_posted_at", null);
+
+    if (itemError) {
+      setError(itemError.message);
+      setSavingId(null);
+      return false;
+    }
+
+    setMessage("Receiving row saved.");
+    await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipment.id });
+    await loadShipment();
+    setSavingId(null);
+    return true;
+  }
+
+  async function confirmReceived(item: ShipmentItem) {
+    if (!shipment || !isAdmin || savingId || item.inventory_posted_at) return;
+
+    const parsed = parseDraft(item, drafts[item.id], actualBoxes, shipment.number_of_boxes);
+
+    if (parsed.error) {
+      setError(parsed.error);
+      return;
+    }
+
+    const hasDiscrepancy =
+      parsed.received !== item.expected_quantity ||
+      parsed.damaged > 0 ||
+      parsed.missing > 0 ||
+      parsed.actualBoxes !== shipment.number_of_boxes ||
+      item.is_unexpected;
+
+    if (hasDiscrepancy && !window.confirm("This row has an issue. Post actual quantities to inventory?")) {
+      return;
+    }
+
+    setSavingId(`confirm-${item.id}`);
+    setError(null);
+    setMessage(null);
+
+    const { error: shipmentError } = await supabase
+      .from("incoming_shipments")
+      .update({ actual_received_boxes: parsed.actualBoxes })
+      .eq("id", shipment.id);
+
+    if (shipmentError) {
+      setError(shipmentError.message);
       setSavingId(null);
       return;
     }
 
-    const { error: postError } = await supabase.rpc("post_incoming_tracking_box_to_inventory", {
-      p_tracking_box_id: box.id,
+    const { error: itemSaveError } = await supabase
+      .from("incoming_items")
+      .update({
+        damaged_quantity: parsed.damaged,
+        missing_quantity: parsed.missing,
+        notes: parsed.notes,
+        received_quantity: parsed.received,
+      })
+      .eq("id", item.id)
+      .is("inventory_posted_at", null);
+
+    if (itemSaveError) {
+      setError(itemSaveError.message);
+      setSavingId(null);
+      return;
+    }
+
+    const { error: postError } = await supabase.rpc("post_incoming_item_to_inventory", {
+      p_incoming_item_id: item.id,
+      p_received_quantity: parsed.received,
+      p_damaged_quantity: parsed.damaged,
+      p_missing_quantity: parsed.missing,
     });
 
     if (postError) {
       setError(postError.message);
-    } else {
-      setMessage("Inventory updated successfully.");
-      await loadShipment();
+      setSavingId(null);
+      return;
     }
 
+    if (item.tracking_box_id) {
+      const { data: remainingItems, error: remainingError } = await supabase
+        .from("incoming_items")
+        .select("id")
+        .eq("tracking_box_id", item.tracking_box_id)
+        .is("deleted_at", null)
+        .is("inventory_posted_at", null);
+
+      if (remainingError) {
+        setError(remainingError.message);
+        setSavingId(null);
+        return;
+      }
+
+      if ((remainingItems ?? []).length === 0) {
+        const { error: boxError } = await supabase
+          .from("incoming_tracking_boxes")
+          .update({
+            inventory_posted_at: new Date().toISOString(),
+            status: hasDiscrepancy ? "Issue" : "Received",
+          })
+          .eq("id", item.tracking_box_id);
+
+        if (boxError) {
+          setError(boxError.message);
+          setSavingId(null);
+          return;
+        }
+      }
+    }
+
+    await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipment.id });
+    setMessage("Inventory updated successfully.");
+    await loadShipment();
     setSavingId(null);
   }
 
@@ -470,182 +394,187 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         </div>
       ) : null}
 
+      <div className="grid gap-4 md:grid-cols-4">
+        <Summary label="Expected Qty" value={totals.expected} />
+        <Summary label="Rows Posted" value={`${totals.posted}/${totals.rows}`} />
+        <Summary label="Boxes" value={shipment.actual_received_boxes ?? shipment.number_of_boxes} />
+        <Summary label="Status" value={shipment.statuses?.name ?? "In Transit"} />
+      </div>
+
       {isAdmin ? (
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markShipmentStatus("Arrived at Prep")}>
+          <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markArrivedAtPrep()}>
             Mark Arrived at Prep
-          </Button>
-          <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markShipmentStatus("Issue")}>
-            Mark Issue
           </Button>
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-5">
-        <Summary label="Expected" value={totals.expected} />
-        <Summary label="Received" value={totals.received} />
-        <Summary label="Expected Boxes" value={totals.expectedBoxes} />
-        <Summary label="Actual Boxes" value={totals.actualBoxes ?? "-"} />
-        <Summary label="Issues" value={totals.issues} />
-        <Summary label="Status" value={shipment.statuses?.name ?? "Unknown"} />
-      </div>
-
-      <Panel title="Receiving details">
-        <div className="grid gap-3 md:grid-cols-[12rem_minmax(0,1fr)_auto]">
-          <Field label="Actual received boxes">
-            <input
-              className={inputClassName}
-              disabled={!isAdmin}
-              min="0"
-              type="number"
-              value={boxDraft.actual_received_boxes}
-              onChange={(event) => setBoxDraft({ ...boxDraft, actual_received_boxes: event.target.value })}
-            />
-          </Field>
-          <Field label="Notes">
-            <input
-              className={inputClassName}
-              disabled={!isAdmin}
-              value={boxDraft.notes}
-              onChange={(event) => setBoxDraft({ ...boxDraft, notes: event.target.value })}
-            />
-          </Field>
-          <div className="flex items-end">
-            <Button type="button" disabled={!isAdmin || savingId === "shipment-boxes"} onClick={() => void saveShipmentReceivingDetails()}>
-              {savingId === "shipment-boxes" ? "Saving..." : "Save"}
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
-      <Panel title="Tracking / box table">
-        <div className="max-h-[32rem] overflow-auto">
-          <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
-            <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Tracking Number</th>
-                <th className="px-4 py-3 font-semibold">Carrier</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 font-semibold">Expected Contents</th>
-                <th className="px-4 py-3 font-semibold">Actual Contents</th>
-                <th className="px-4 py-3 font-semibold">Difference</th>
-                <th className="px-4 py-3 font-semibold">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {shipment.incoming_tracking_boxes.map((box) => {
-                const expected = box.incoming_items.reduce((sum, item) => sum + item.expected_quantity, 0);
-                const actual = box.incoming_items.reduce((sum, item) => sum + item.received_quantity, 0);
-                const difference = actual - expected;
-
-                return (
-                  <tr key={box.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-950">{box.tracking_number}</td>
-                    <td className="px-4 py-3 text-slate-600">{box.carrier ?? shipment.carrier}</td>
-                    <td className="px-4 py-3">
-                      {isAdmin ? (
-                        <select className={inputClassName} value={box.status} onChange={(event) => void updateBoxStatus(box, event.target.value as BoxStatus)} disabled={Boolean(box.inventory_posted_at)}>
-                          {boxStatuses.map((status) => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <StatusBadge tone={boxStatusTone(box.status)}>{box.status}</StatusBadge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{expected}</td>
-                    <td className="px-4 py-3 text-slate-600">{actual}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge tone={difference === 0 ? "emerald" : difference > 0 ? "amber" : "rose"}>
-                        {difference > 0 ? `+${difference}` : difference}
-                      </StatusBadge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Button type="button" disabled={!isAdmin || Boolean(box.inventory_posted_at) || savingId === `post-${box.id}`} onClick={() => void postBoxToInventory(box)}>
-                        {box.inventory_posted_at ? "Already posted to inventory" : savingId === `post-${box.id}` ? "Posting..." : "Post to Inventory"}
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      {shipment.incoming_tracking_boxes.map((box) => (
-        <Panel key={box.id} title={box.tracking_number} description="Actual contents">
-          <div className="max-h-[28rem] overflow-auto">
-            <table className="w-full min-w-[820px] text-left text-sm tabular-nums">
+      <Panel title="Receiving">
+        {shipment.incoming_items.length === 0 ? (
+          <EmptyState title="No product rows" body="This shipment does not have any products attached." />
+        ) : (
+          <div className="max-h-[36rem] overflow-auto">
+            <table className="w-full min-w-[1040px] text-left text-sm tabular-nums">
               <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Product</th>
                   <th className="px-4 py-3 font-semibold">Expected Qty</th>
                   <th className="px-4 py-3 font-semibold">Actual Qty</th>
-                  <th className="px-4 py-3 font-semibold">Damaged</th>
-                  <th className="px-4 py-3 font-semibold">Missing</th>
-                  <th className="px-4 py-3 font-semibold">Difference</th>
+                  <th className="px-4 py-3 font-semibold">Boxes</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Notes</th>
                   <th className="px-4 py-3 font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {box.incoming_items.map((item) => {
+                {shipment.incoming_items.map((item) => {
                   const draft = drafts[item.id];
-                  const actual = draft?.received.trim() === ""
-                    ? item.expected_quantity
-                    : Number(draft?.received ?? item.received_quantity);
-                  const difference = actual - item.expected_quantity;
+                  const parsed = parseDraft(item, draft, actualBoxes, shipment.number_of_boxes);
+                  const rowIssue =
+                    Boolean(parsed.error) ||
+                    parsed.received !== item.expected_quantity ||
+                    parsed.damaged > 0 ||
+                    parsed.missing > 0 ||
+                    parsed.actualBoxes !== shipment.number_of_boxes ||
+                    item.is_unexpected;
+                  const showIssueFields = issueMode[item.id] || rowIssue;
 
                   return (
-                    <tr key={item.id} className={item.is_unexpected ? "bg-amber-50/40" : "hover:bg-slate-50"}>
+                    <tr key={item.id} className="align-top hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-950">
                         {item.products?.product_name ?? "Unknown product"}
-                        {item.is_unexpected ? <span className="ml-2 text-xs font-semibold text-amber-700">Unexpected</span> : null}
+                        {item.products?.sku ? (
+                          <div className="mt-1 text-xs font-normal text-slate-500">{item.products.sku}</div>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-slate-600">{item.expected_quantity}</td>
                       <td className="px-4 py-3">
-                        {isAdmin ? (
-                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" placeholder={String(item.expected_quantity)} value={draft?.received ?? ""} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], received: event.target.value } }))} />
+                        {isAdmin && !item.inventory_posted_at ? (
+                          <div className="space-y-2">
+                            <input
+                              className={`${inputClassName} w-28`}
+                              min="0"
+                              type="number"
+                              value={draft?.received ?? String(item.expected_quantity)}
+                              onChange={(event) =>
+                                setDrafts((current) => ({
+                                  ...current,
+                                  [item.id]: { ...current[item.id], received: event.target.value },
+                                }))
+                              }
+                            />
+                            {showIssueFields ? (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <input
+                                  aria-label="Damaged quantity"
+                                  className={`${inputClassName} w-28`}
+                                  min="0"
+                                  placeholder="Damaged"
+                                  type="number"
+                                  value={draft?.damaged ?? "0"}
+                                  onChange={(event) =>
+                                    setDrafts((current) => ({
+                                      ...current,
+                                      [item.id]: { ...current[item.id], damaged: event.target.value },
+                                    }))
+                                  }
+                                />
+                                <input
+                                  aria-label="Missing quantity"
+                                  className={`${inputClassName} w-28`}
+                                  min="0"
+                                  placeholder="Missing"
+                                  type="number"
+                                  value={draft?.missing ?? "0"}
+                                  onChange={(event) =>
+                                    setDrafts((current) => ({
+                                      ...current,
+                                      [item.id]: { ...current[item.id], missing: event.target.value },
+                                    }))
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                          </div>
                         ) : (
-                          <span className="text-slate-600">{item.received_quantity}</span>
+                          <span className="text-slate-600">{item.received_quantity || item.expected_quantity}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {isAdmin ? (
-                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" value={draft?.damaged ?? "0"} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], damaged: event.target.value } }))} />
+                        {isAdmin && !item.inventory_posted_at ? (
+                          <input
+                            className={`${inputClassName} w-28`}
+                            min="0"
+                            type="number"
+                            value={actualBoxes}
+                            onChange={(event) => setActualBoxes(event.target.value)}
+                          />
                         ) : (
-                          <span className="text-slate-600">{item.damaged_quantity}</span>
+                          <span className="text-slate-600">{shipment.actual_received_boxes ?? shipment.number_of_boxes}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {isAdmin ? (
-                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" value={draft?.missing ?? "0"} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], missing: event.target.value } }))} />
-                        ) : (
-                          <span className="text-slate-600">{item.missing_quantity}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge tone={difference === 0 ? "emerald" : difference > 0 ? "amber" : "rose"}>
-                          {difference > 0 ? `+${difference}` : difference}
+                        <StatusBadge tone={rowStatusTone(item, rowIssue, shipment.statuses?.name)}>
+                          {rowStatus(item, rowIssue, shipment.statuses?.name)}
                         </StatusBadge>
                       </td>
                       <td className="px-4 py-3">
-                        {isAdmin ? (
-                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} value={draft?.notes ?? ""} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], notes: event.target.value } }))} />
+                        {isAdmin && !item.inventory_posted_at ? (
+                          <Field label=" ">
+                            <input
+                              className={inputClassName}
+                              value={draft?.notes ?? ""}
+                              onChange={(event) =>
+                                setDrafts((current) => ({
+                                  ...current,
+                                  [item.id]: { ...current[item.id], notes: event.target.value },
+                                }))
+                              }
+                            />
+                          </Field>
                         ) : (
                           <span className="text-slate-600">{item.notes ?? "-"}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-2">
-                          <Button type="button" variant="secondary" disabled={!isAdmin || Boolean(item.inventory_posted_at) || savingId === `item-${item.id}`} onClick={() => void saveItem(item)}>
-                            Save
-                          </Button>
-                          <Button type="button" variant="danger" disabled={!isAdmin || Boolean(item.inventory_posted_at) || savingId === `item-${item.id}`} onClick={() => void removeItem(item)}>
-                            Remove
-                          </Button>
-                        </div>
+                        {isAdmin ? (
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={Boolean(item.inventory_posted_at) || savingId !== null}
+                              onClick={() => void saveRow(item)}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={Boolean(item.inventory_posted_at) || savingId !== null}
+                              onClick={() => setIssueMode((current) => ({ ...current, [item.id]: true }))}
+                            >
+                              Edit Qty
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={Boolean(item.inventory_posted_at) || savingId !== null}
+                              onClick={() => void confirmReceived(item)}
+                            >
+                              {savingId === `confirm-${item.id}` ? "Posting..." : item.inventory_posted_at ? "Already posted" : "Confirm Received"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="danger"
+                              disabled={Boolean(item.inventory_posted_at) || savingId !== null}
+                              onClick={() => void markIssue(item)}
+                            >
+                              Mark Issue
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-slate-500">{item.inventory_posted_at ? "Available" : "View"}</span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -653,32 +582,8 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
               </tbody>
             </table>
           </div>
-
-          {isAdmin && !box.inventory_posted_at ? (
-            <form className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]" onSubmit={(event) => void addUnexpectedLine(event, box)}>
-              <Field label="Add product">
-                <select className={inputClassName} value={newLines[box.id]?.product_id ?? ""} onChange={(event) => setNewLines((current) => ({ ...current, [box.id]: { ...current[box.id], product_id: event.target.value } }))}>
-                  <option value="">Select product</option>
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.product_name}{product.sku ? ` (${product.sku})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Actual">
-                <input className={inputClassName} min="0" type="number" value={newLines[box.id]?.received ?? "1"} onChange={(event) => setNewLines((current) => ({ ...current, [box.id]: { ...current[box.id], received: event.target.value } }))} />
-              </Field>
-              <Field label="Notes">
-                <textarea className={textAreaClassName} value={newLines[box.id]?.notes ?? ""} onChange={(event) => setNewLines((current) => ({ ...current, [box.id]: { ...current[box.id], notes: event.target.value } }))} />
-              </Field>
-              <div className="flex items-end">
-                <Button type="submit" disabled={savingId === `new-${box.id}`}>Add line</Button>
-              </div>
-            </form>
-          ) : null}
-        </Panel>
-      ))}
+        )}
+      </Panel>
     </div>
   );
 }
@@ -692,13 +597,63 @@ function Summary({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function getDifference(item: ShipmentItem) {
-  return item.received_quantity - item.expected_quantity;
+function parseDraft(
+  item: ShipmentItem,
+  draft: ItemDraft | undefined,
+  actualBoxesValue: string,
+  expectedBoxes: number,
+) {
+  const received = Number(draft?.received ?? item.expected_quantity);
+  const damaged = Number(draft?.damaged ?? item.damaged_quantity);
+  const missing = Number(draft?.missing ?? item.missing_quantity);
+  const actualBoxes = actualBoxesValue.trim() === "" ? expectedBoxes : Number(actualBoxesValue);
+
+  if (!Number.isInteger(received) || received < 0) {
+    return { error: "Actual quantity must be a whole number zero or greater." } as const;
+  }
+
+  if (!Number.isInteger(damaged) || damaged < 0) {
+    return { error: "Damaged quantity must be a whole number zero or greater." } as const;
+  }
+
+  if (!Number.isInteger(missing) || missing < 0) {
+    return { error: "Missing quantity must be a whole number zero or greater." } as const;
+  }
+
+  if (!Number.isInteger(actualBoxes) || actualBoxes < 0) {
+    return { error: "Boxes must be a whole number zero or greater." } as const;
+  }
+
+  return {
+    actualBoxes,
+    damaged,
+    error: null,
+    missing,
+    notes: draft?.notes.trim() || null,
+    received,
+  } as const;
 }
 
-function boxStatusTone(status: BoxStatus) {
-  if (status === "Received") return "emerald";
+function hasItemIssue(item: ShipmentItem) {
+  return (
+    item.is_unexpected ||
+    item.damaged_quantity > 0 ||
+    item.missing_quantity > 0 ||
+    (item.inventory_posted_at ? item.received_quantity !== item.expected_quantity : false)
+  );
+}
+
+function rowStatus(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: string) {
+  if (rowIssue || shipmentStatus === "Issue") return "Issue";
+  if (item.inventory_posted_at) return "Available";
+  if (shipmentStatus === "Arrived at Prep") return "Receiving";
+  return "In Transit";
+}
+
+function rowStatusTone(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: string) {
+  const status = rowStatus(item, rowIssue, shipmentStatus);
+  if (status === "Available") return "emerald";
+  if (status === "Receiving") return "orange";
   if (status === "Issue") return "rose";
-  if (status === "Delivered") return "amber";
   return "blue";
 }
