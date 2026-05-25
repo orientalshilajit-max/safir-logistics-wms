@@ -9,6 +9,8 @@ const PRODUCTION_REDIRECT_URL = "https://app.safir-logistics.com";
 const RATE_LIMIT_MESSAGE =
   "Email limit reached. Please wait a few minutes before sending another invite.";
 const ADMIN_RATE_LIMIT_MESSAGE = "Email rate limit reached";
+const ADMIN_EMAIL_LINK_ERROR =
+  "This email belongs to an admin user and cannot be linked as a client.";
 const EMAIL_SEND_FAILED_MESSAGE = "Supabase email send failed";
 
 type ClientRow = {
@@ -83,6 +85,22 @@ export async function POST(
         instructions: manualInstructions(typedClient.id, typedClient),
       },
       { status: 400 },
+    );
+  }
+
+  if (existingUser && isAdminAuthUser(existingUser)) {
+    logAuthError("blocked admin email client link", null, typedClient);
+    return NextResponse.json(
+      { error: ADMIN_EMAIL_LINK_ERROR },
+      { status: 409 },
+    );
+  }
+
+  if (existingUser && user?.id === existingUser.id) {
+    logAuthError("blocked current admin metadata overwrite", null, typedClient);
+    return NextResponse.json(
+      { error: ADMIN_EMAIL_LINK_ERROR },
+      { status: 409 },
     );
   }
 
@@ -264,6 +282,10 @@ function logAuthError(action: string, error: unknown, client?: ClientRow) {
     email: client?.email,
     error,
   });
+}
+
+function isAdminAuthUser(user: User) {
+  return user.app_metadata?.role === "admin";
 }
 
 async function findAuthUserForClient(
