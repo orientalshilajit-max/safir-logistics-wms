@@ -19,10 +19,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-screen">
         <aside
           className={[
-            "hidden w-72 shrink-0 lg:block",
+            "hidden shrink-0 lg:block",
             isClientPortal
-              ? "bg-[#071a33] text-white"
-              : "border-r border-slate-200 bg-white",
+              ? "w-64 bg-[#0b1f3a] text-white shadow-[inset_-1px_0_0_rgba(255,255,255,0.06)]"
+              : "w-72 border-r border-slate-200 bg-white",
           ].join(" ")}
         >
           <SidebarContent
@@ -34,7 +34,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
-            <div className="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+            <div className="flex min-h-14 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Safir Logistics
@@ -69,8 +69,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </nav>
           </header>
 
-          <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8">
-            <div className="mx-auto max-w-7xl">{children}</div>
+          <main className="min-w-0 flex-1 px-4 py-4 sm:px-5 lg:px-6">
+            <div className={isClientPortal ? "mx-auto max-w-[98rem]" : "mx-auto max-w-7xl"}>{children}</div>
           </main>
         </div>
       </div>
@@ -91,11 +91,11 @@ function SidebarContent({
     <div className="flex h-screen flex-col">
       <div
         className={[
-          "px-6 py-5",
+          "px-5 py-4",
           clientPortal ? "border-b border-white/10" : "border-b border-slate-200",
         ].join(" ")}
       >
-        <Link href="/" className="flex h-14 items-center gap-3">
+        <Link href="/" className="flex h-12 items-center gap-3">
           <Image
             src="/logosaflog.png"
             alt="Safir Logistics"
@@ -103,14 +103,14 @@ function SidebarContent({
             height={80}
             priority
             className={[
-              "h-12 w-auto object-contain",
+              "h-10 w-auto object-contain",
               clientPortal ? "rounded-md bg-white px-2 py-1" : "",
             ].join(" ")}
           />
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2.5 py-4">
         {routes.map((item) => {
           const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
 
@@ -119,11 +119,11 @@ function SidebarContent({
               key={item.href}
               href={item.href}
               className={[
-                "group flex min-h-12 items-center justify-between rounded-md px-3 text-sm font-semibold transition",
+                "group flex min-h-10 items-center justify-between rounded-md px-3 text-sm font-medium transition",
                 clientPortal
                   ? active
-                    ? "bg-blue-600 text-white shadow-sm"
-                    : "text-slate-200 hover:bg-white/10 hover:text-white"
+                    ? "bg-blue-600/90 text-white shadow-[0_0_0_1px_rgba(96,165,250,0.25),0_8px_24px_rgba(37,99,235,0.22)]"
+                    : "text-slate-300 hover:bg-white/10 hover:text-white"
                   : active
                     ? "bg-slate-950 text-white shadow-sm"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   EmptyState,
   ErrorBanner,
@@ -197,14 +197,13 @@ export function IncomingShipmentsClient({
             <EmptyState title="No shipments found" body="Create an incoming shipment or adjust the filters." />
           ) : (
             <div className="space-y-4">
-              <div className="max-h-[30rem] overflow-auto">
+              <div className="max-h-[42rem] overflow-auto">
                 <ClientShipmentsTable
                   shipments={filteredShipments}
                   selectedShipmentId={selectedShipment?.id ?? null}
                   onSelect={setSelectedShipmentId}
                 />
               </div>
-              {selectedShipment ? <ClientShipmentDetails shipment={selectedShipment} /> : null}
             </div>
           )}
         </Panel>
@@ -366,7 +365,7 @@ function ClientStat({
   sublabel: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
@@ -403,33 +402,47 @@ function ClientShipmentsTable({
         {shipments.map((shipment) => {
           const summary = getShipmentSummary(shipment);
           const statusName = getDisplayStatus(shipment);
+          const selected = selectedShipmentId === shipment.id;
 
           return (
-            <tr
-              key={shipment.id}
-              className={selectedShipmentId === shipment.id ? "bg-blue-50/60" : "hover:bg-slate-50"}
-            >
-              <td className="px-4 py-3 font-medium text-blue-700">{shipment.id.slice(0, 8)}</td>
-              <td className="px-4 py-3 text-slate-600">{formatDate(shipment.created_at)}</td>
-              <td className="px-4 py-3 text-slate-600">{shipment.incoming_items.length}</td>
-              <td className="px-4 py-3 text-slate-600">{shipment.number_of_boxes}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.expectedUnits}</td>
-              <td className="px-4 py-3 text-slate-600">{shipment.tracking_numbers[0] ?? "-"}</td>
-              <td className="px-4 py-3 text-slate-600">{shipment.carrier || "-"}</td>
-              <td className="px-4 py-3 text-slate-600">{formatDate(shipment.created_at)}</td>
-              <td className="px-4 py-3">
-                <StatusBadge tone={statusTone(statusName)}>{statusName === "Arrived at Prep" ? "Receiving" : statusName}</StatusBadge>
-              </td>
-              <td className="px-4 py-3">
-                <button
-                  type="button"
-                  className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  onClick={() => onSelect(shipment.id)}
-                >
-                  View
-                </button>
-              </td>
-            </tr>
+            <Fragment key={shipment.id}>
+              <tr
+                className={selected ? "bg-blue-50/60" : "cursor-pointer hover:bg-slate-50"}
+                onClick={() => onSelect(shipment.id)}
+              >
+                <td className="px-3 py-2.5 font-medium text-blue-700">{shipment.id.slice(0, 8)}</td>
+                <td className="px-3 py-2.5 text-slate-600">{formatDate(shipment.created_at)}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.incoming_items.length}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.number_of_boxes}</td>
+                <td className="px-3 py-2.5 text-slate-600">{summary.expectedUnits}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.tracking_numbers[0] ?? "-"}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.carrier || "-"}</td>
+                <td className="px-3 py-2.5 text-slate-600">{formatDate(shipment.created_at)}</td>
+                <td className="px-3 py-2.5">
+                  <StatusBadge tone={statusTone(statusName)}>{statusName === "Arrived at Prep" ? "Receiving" : statusName}</StatusBadge>
+                </td>
+                <td className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    aria-label={`Open shipment ${shipment.id.slice(0, 8)}`}
+                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelect(shipment.id);
+                    }}
+                  >
+                    {selected ? "-" : "+"}
+                  </button>
+                </td>
+              </tr>
+              {selected ? (
+                <tr key={`${shipment.id}-details`} className="bg-slate-50/70">
+                  <td colSpan={10} className="px-3 py-3">
+                    <ClientShipmentDetails shipment={shipment} />
+                  </td>
+                </tr>
+              ) : null}
+            </Fragment>
           );
         })}
       </tbody>

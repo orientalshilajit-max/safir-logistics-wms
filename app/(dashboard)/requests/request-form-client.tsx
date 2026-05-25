@@ -711,20 +711,24 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
                     }
                   />
                 </Field>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() =>
-                    setForm({
-                      ...form,
-                      requested_quantity: String(
-                        availableForSelectedInventory(selectedInventory, existingRequest),
-                      ),
-                    })
-                  }
-                >
-                  All units
-                </Button>
+                <label className="flex min-h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={
+                      form.requested_quantity ===
+                      String(availableForSelectedInventory(selectedInventory, existingRequest))
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        requested_quantity: event.target.checked
+                          ? String(availableForSelectedInventory(selectedInventory, existingRequest))
+                          : "",
+                      })
+                    }
+                  />
+                  Entire Inventory
+                </label>
               </div>
             </WizardSection>
           ) : null}

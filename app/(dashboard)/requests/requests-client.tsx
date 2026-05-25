@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
@@ -43,6 +43,8 @@ export function RequestsClient() {
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [serviceTypeFilter, setServiceTypeFilter] = useState("all");
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +89,8 @@ export function RequestsClient() {
     return requests.filter((request) => {
       const matchesStatus =
         statusFilter === "all" || normalizeRequestStatus(request.status) === statusFilter;
+      const serviceType = getRequestServiceType(request.notes);
+      const matchesServiceType = serviceTypeFilter === "all" || serviceType === serviceTypeFilter;
       const matchesQuery =
         !normalized ||
         request.request_number.toLowerCase().includes(normalized) ||
@@ -100,9 +104,9 @@ export function RequestsClient() {
           );
         });
 
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesServiceType && matchesQuery;
     });
-  }, [query, requests, statusFilter]);
+  }, [query, requests, serviceTypeFilter, statusFilter]);
 
   async function updateRequestStatus(
     request: ServiceRequest,
@@ -249,8 +253,17 @@ export function RequestsClient() {
                 </option>
               ))}
             </select>
-            <select className={inputClassName} value="all" disabled>
+            <select
+              className={inputClassName}
+              value={serviceTypeFilter}
+              onChange={(event) => setServiceTypeFilter(event.target.value)}
+            >
               <option value="all">All service types</option>
+              {Array.from(new Set(requests.map((request) => getRequestServiceType(request.notes)).filter((value) => value !== "-"))).map((serviceType) => (
+                <option key={serviceType} value={serviceType}>
+                  {serviceType}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -287,34 +300,49 @@ export function RequestsClient() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredRequests.map((request) => (
-                      <tr key={request.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-blue-700">{request.request_number}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatDate(request.created_at)}</td>
-                        <td className="px-4 py-3 text-slate-600">{getRequestServiceType(request.notes)}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatRequestProduct(request)}</td>
-                        <td className="px-4 py-3 text-slate-600">{request.request_items?.reduce((sum, item) => sum + item.requested_quantity, 0) ?? "-"}</td>
-                        <td className="px-4 py-3">
-                          <StatusBadge tone={statusTone(request.status)}>{normalizeRequestStatus(request.status)}</StatusBadge>
-                        </td>
-                        <td className="px-4 py-3 text-slate-600">You</td>
-                        <td className="px-4 py-3 text-slate-600">-</td>
-                        <td className="px-4 py-3">
-                          <RequestActions
-                            isAdmin={false}
-                            request={request}
-                            disabled={updatingStatusId === request.id}
-                            onArchive={() => void archiveRequest(request)}
-                            onSubmitDraft={() => void submitDraftRequest(request)}
-                            onStatus={(status) => void updateRequestStatus(request, status)}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredRequests.map((request) => {
+                      const selected = selectedRequestId === request.id || (!selectedRequestId && filteredRequests[0]?.id === request.id);
+
+                      return (
+                        <Fragment key={request.id}>
+                          <tr
+                            className={selected ? "bg-blue-50/60" : "cursor-pointer hover:bg-slate-50"}
+                            onClick={() => setSelectedRequestId(request.id)}
+                          >
+                            <td className="px-3 py-2.5 font-medium text-blue-700">{request.request_number}</td>
+                            <td className="px-3 py-2.5 text-slate-600">{formatDate(request.created_at)}</td>
+                            <td className="px-3 py-2.5 text-slate-600">{getRequestServiceType(request.notes)}</td>
+                            <td className="px-3 py-2.5 text-slate-600">{formatRequestProduct(request)}</td>
+                            <td className="px-3 py-2.5 text-slate-600">{request.request_items?.reduce((sum, item) => sum + item.requested_quantity, 0) ?? "-"}</td>
+                            <td className="px-3 py-2.5">
+                              <StatusBadge tone={statusTone(request.status)}>{normalizeRequestStatus(request.status)}</StatusBadge>
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-600">You</td>
+                            <td className="px-3 py-2.5 text-slate-600">-</td>
+                            <td className="px-3 py-2.5" onClick={(event) => event.stopPropagation()}>
+                              <RequestActions
+                                isAdmin={false}
+                                request={request}
+                                disabled={updatingStatusId === request.id}
+                                onArchive={() => void archiveRequest(request)}
+                                onSubmitDraft={() => void submitDraftRequest(request)}
+                                onStatus={(status) => void updateRequestStatus(request, status)}
+                              />
+                            </td>
+                          </tr>
+                          {selected ? (
+                            <tr className="bg-slate-50/70">
+                              <td colSpan={9} className="px-3 py-3">
+                                <ClientOrderDetails request={request} />
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-              <ClientOrderDetails request={filteredRequests[0]} />
             </div>
           )}
         </Panel>
@@ -550,7 +578,7 @@ function OrderMetric({
   sublabel: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>

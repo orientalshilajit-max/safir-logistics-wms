@@ -345,7 +345,7 @@ function Metric({
   money?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-medium text-slate-500">{label}</p>
         <StatusBadge tone="emerald">Live</StatusBadge>
@@ -373,16 +373,16 @@ function PortalMetric({
   loading: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       {loading ? (
         <div className="mt-4 h-8 w-20 animate-pulse rounded-md bg-slate-100" />
       ) : (
-        <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">
+        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">
           {value}
         </p>
       )}
-      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+      <p className="mt-1 text-xs text-slate-500">{sublabel}</p>
     </div>
   );
 }
@@ -391,9 +391,9 @@ function PortalAction({ href, title }: { href: string; title: string }) {
   return (
     <Link
       href={href}
-      className="flex min-h-24 items-center rounded-lg border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-950 transition hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
+      className="flex min-h-20 items-center rounded-lg border border-slate-200 bg-white p-3 text-sm font-medium text-slate-950 transition hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
-      <span className="mr-3 flex size-10 items-center justify-center rounded-full bg-blue-50 text-lg text-blue-700">
+      <span className="mr-3 flex size-9 items-center justify-center rounded-full bg-blue-50 text-base text-blue-700">
         +
       </span>
       {title}
@@ -523,7 +523,7 @@ function CompactBlock({
   loading: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-sm font-semibold text-slate-950">{title}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {items.map(([label, value, tone]) => (

@@ -410,24 +410,34 @@ export function InvoicesClient() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredInvoices.map((invoice) => (
                     <tr key={invoice.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-blue-700">{invoice.invoice_number}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatDate(invoice.issue_date)}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatDate(invoice.due_date)}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatInvoiceType(invoice)}</td>
-                      <td className="px-4 py-3 text-slate-600">{invoice.service_requests?.request_number ?? "-"}</td>
-                      <td className="px-4 py-3 font-medium text-slate-950">{formatMoney(invoice.total_amount)}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 font-medium text-blue-700">{invoice.invoice_number}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{formatDate(invoice.issue_date)}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{formatDate(invoice.due_date)}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{formatInvoiceType(invoice)}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{invoice.service_requests?.request_number ?? "-"}</td>
+                      <td className="px-3 py-2.5 font-medium text-slate-950">{formatMoney(invoice.total_amount)}</td>
+                      <td className="px-3 py-2.5">
                         <StatusBadge tone={invoiceStatusTone(invoice.status)}>{invoice.status}</StatusBadge>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-950">{formatMoney(invoice.balance_due)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
-                            View
-                          </Button>
-                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
-                            Download PDF
-                          </Button>
+                      <td className="px-3 py-2.5 font-medium text-slate-950">{formatMoney(invoice.balance_due)}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            aria-label={`View ${invoice.invoice_number}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                            onClick={() => openInvoicePrintView(invoice)}
+                          >
+                            V
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Download ${invoice.invoice_number}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                            onClick={() => openInvoicePrintView(invoice)}
+                          >
+                            D
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -732,7 +742,7 @@ function InvoiceMetric({
   sublabel: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>

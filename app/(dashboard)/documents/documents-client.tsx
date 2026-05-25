@@ -381,7 +381,12 @@ export function DocumentsClient() {
                   <tbody className="divide-y divide-slate-100">
                     {clientDocuments.map((document) => (
                       <tr key={document.id} className="hover:bg-slate-50">
-                        <td className={`${tableCellClassName} font-medium text-slate-950`}>{document.file_name}</td>
+                        <td className={`${tableCellClassName} font-medium text-slate-950`}>
+                          <div className="flex items-center gap-3">
+                            <FileIcon type={getFileType(document)} />
+                            <span>{document.file_name}</span>
+                          </div>
+                        </td>
                         <td className={`${tableCellClassName} text-slate-600`}>{documentFolder(document)}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{getFileType(document).toUpperCase()}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>-</td>
@@ -701,11 +706,31 @@ function FileMetric({
   sublabel: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
     </div>
+  );
+}
+
+function FileIcon({ type }: { type: string }) {
+  const normalized = type.toLowerCase();
+  const color =
+    normalized === "pdf"
+      ? "bg-rose-50 text-rose-700"
+      : ["png", "jpg", "jpeg", "webp"].includes(normalized)
+        ? "bg-amber-50 text-amber-700"
+        : ["xls", "xlsx", "csv"].includes(normalized)
+          ? "bg-emerald-50 text-emerald-700"
+          : normalized.includes("doc")
+            ? "bg-blue-50 text-blue-700"
+            : "bg-slate-100 text-slate-600";
+
+  return (
+    <span className={`flex size-8 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold uppercase ${color}`}>
+      {normalized.slice(0, 3)}
+    </span>
   );
 }
 

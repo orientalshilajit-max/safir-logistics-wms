@@ -15,7 +15,7 @@ import {
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
-type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "asin">;
+type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "asin" | "barcode" | "photo_url">;
 type InventoryRow = Tables<"inventory"> & {
   clients: Client | null;
   products: Product | null;
@@ -98,7 +98,7 @@ export function InventoryClient() {
   const loadInventory = useCallback(async () => {
     const query = supabase
       .from("inventory")
-      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin)")
+      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin, barcode, photo_url)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 
@@ -245,16 +245,21 @@ export function InventoryClient() {
                     const incoming = Math.max(row.expected_qty - row.received_qty, 0);
                     return (
                       <tr key={row.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-950">{row.products?.product_name ?? "Unknown product"}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.products?.sku ?? "-"}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.products?.asin ?? row.products?.fnsku ?? "-"}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.reserved_qty}</td>
-                        <td className="px-4 py-3 text-slate-600">{incoming}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.processing_qty}</td>
-                        <td className="px-4 py-3 font-semibold text-emerald-700">{row.available_qty}</td>
-                        <td className="px-4 py-3 text-slate-600">{row.available_qty > 0 ? 1 : 0}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatDate(row.updated_at)}</td>
+                        <td className="px-3 py-2.5 font-medium text-slate-950">
+                          <div className="flex items-center gap-3">
+                            <InventoryThumb product={row.products} />
+                            <span>{row.products?.product_name ?? "Unknown product"}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.products?.sku ?? "-"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.products?.asin ?? row.products?.barcode ?? "-"}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.reserved_qty}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{incoming}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.processing_qty}</td>
+                        <td className="px-3 py-2.5 font-semibold text-emerald-700">{row.available_qty}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.available_qty > 0 ? 1 : 0}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{formatDate(row.updated_at)}</td>
                       </tr>
                     );
                   })}
@@ -402,10 +407,27 @@ function EditableQty({
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-sm font-medium text-slate-500">{label}</p>
       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">{value}</p>
     </div>
+  );
+}
+
+function InventoryThumb({ product }: { product: Product | null }) {
+  if (product?.photo_url) {
+    return (
+      <span
+        className="block size-9 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
+        style={{ backgroundImage: `url("${product.photo_url}")` }}
+      />
+    );
+  }
+
+  return (
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-xs font-semibold text-slate-500">
+      {(product?.product_name ?? "??").slice(0, 2).toUpperCase()}
+    </span>
   );
 }
 

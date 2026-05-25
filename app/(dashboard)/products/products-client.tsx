@@ -411,29 +411,36 @@ function ClientProductsTable({
 
           return (
             <tr key={product.id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-950">{product.product_name}</td>
-              <td className="px-4 py-3 text-slate-600">{product.sku ?? "-"}</td>
-              <td className="px-4 py-3 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.inStock}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.incomingUnits}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.reservedUnits}</td>
-              <td className="px-4 py-3 text-slate-600">{formatDate(summary.lastUpdated ?? product.updated_at)}</td>
-              <td className="px-4 py-3">
+              <td className="px-3 py-2.5 font-medium text-slate-950">
+                <div className="flex items-center gap-3">
+                  <ProductThumb product={product} />
+                  <span>{product.product_name}</span>
+                </div>
+              </td>
+              <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
+              <td className="px-3 py-2.5 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
+              <td className="px-3 py-2.5 text-slate-600">{summary.inStock}</td>
+              <td className="px-3 py-2.5 text-slate-600">{summary.incomingUnits}</td>
+              <td className="px-3 py-2.5 text-slate-600">{summary.reservedUnits}</td>
+              <td className="px-3 py-2.5 text-slate-600">{formatDate(summary.lastUpdated ?? product.updated_at)}</td>
+              <td className="px-3 py-2.5">
                 <StatusBadge tone={clientProductStatusTone(summary.status)}>{summary.status}</StatusBadge>
               </td>
-              <td className="px-4 py-3">
-                <div className="flex flex-wrap gap-2">
+              <td className="px-3 py-2.5">
+                <div className="flex gap-1.5">
                   <Link
                     href={`/products/${product.id}/edit`}
-                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    aria-label={`Edit ${product.product_name}`}
+                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                   >
-                    Edit
+                    E
                   </Link>
                   <Link
                     href={`/incoming-shipments?status=${summary.status === "Issue" ? "issue" : "all"}`}
-                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    aria-label={`View ${product.product_name}`}
+                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                   >
-                    View
+                    V
                   </Link>
                 </div>
               </td>
@@ -455,11 +462,28 @@ function ClientStat({
   sublabel: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
     </div>
+  );
+}
+
+function ProductThumb({ product }: { product: Product }) {
+  if (product.photo_url) {
+    return (
+      <span
+        className="block size-9 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
+        style={{ backgroundImage: `url("${product.photo_url}")` }}
+      />
+    );
+  }
+
+  return (
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-xs font-semibold text-slate-500">
+      {product.product_name.slice(0, 2).toUpperCase()}
+    </span>
   );
 }
 

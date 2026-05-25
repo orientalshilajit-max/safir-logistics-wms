@@ -50,7 +50,7 @@ export function Button({
     <button
       {...props}
       className={[
-        "inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed",
+        "inline-flex h-9 items-center justify-center rounded-md px-3.5 text-sm font-medium transition focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed",
         styles[variant],
         props.className ?? "",
       ].join(" ")}
@@ -76,7 +76,7 @@ export function Field({
 }
 
 export const inputClassName =
-  "h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100 disabled:bg-slate-50 disabled:text-slate-500";
+  "h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100 disabled:bg-slate-50 disabled:text-slate-500";
 
 export const textAreaClassName =
   "min-h-24 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100";
@@ -88,7 +88,7 @@ export const tableHeadClassName =
   "sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur";
 
 export const tableCellClassName =
-  "px-4 py-3 align-middle";
+  "px-3 py-2.5 align-middle";
 
 export function StatusBadge({
   children,
@@ -98,19 +98,19 @@ export function StatusBadge({
   tone?: "slate" | "emerald" | "blue" | "amber" | "rose" | "orange" | "indigo" | "cyan";
 }) {
   const styles = {
-    slate: "border-slate-200 bg-slate-100 text-slate-600",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    blue: "border-blue-200 bg-blue-50 text-blue-700",
-    amber: "border-amber-200 bg-amber-50 text-amber-700",
-    rose: "border-rose-200 bg-rose-50 text-rose-700",
-    orange: "border-orange-200 bg-orange-50 text-orange-700",
-    indigo: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    cyan: "border-cyan-200 bg-cyan-50 text-cyan-700",
+    slate: "bg-slate-100 text-slate-600",
+    emerald: "bg-emerald-50 text-emerald-700",
+    blue: "bg-blue-50 text-blue-700",
+    amber: "bg-amber-50 text-amber-700",
+    rose: "bg-rose-50 text-rose-700",
+    orange: "bg-orange-50 text-orange-700",
+    indigo: "bg-indigo-50 text-indigo-700",
+    cyan: "bg-cyan-50 text-cyan-700",
   };
 
   return (
     <span
-      className={`inline-flex w-fit shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold leading-none ${styles[tone]}`}
+      className={`inline-flex w-fit shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium leading-none ${styles[tone]}`}
     >
       {children}
     </span>
@@ -177,7 +177,7 @@ export function QuickFilterButton({
     <button
       {...props}
       className={[
-        "min-h-9 rounded-full border px-3 text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-slate-100",
+        "min-h-8 rounded-full border px-3 text-sm font-medium transition focus:outline-none focus:ring-4 focus:ring-slate-100",
         active
           ? "border-slate-950 bg-slate-950 text-white"
           : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950",
@@ -200,11 +200,11 @@ export function Panel({
 }) {
   return (
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 px-5 py-4">
-        <h3 className="text-base font-semibold text-slate-950">{title}</h3>
+      <div className="border-b border-slate-200 px-4 py-3">
+        <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
         {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
       </div>
-      <div className="p-5">{children}</div>
+      <div className="p-4">{children}</div>
     </section>
   );
 }
