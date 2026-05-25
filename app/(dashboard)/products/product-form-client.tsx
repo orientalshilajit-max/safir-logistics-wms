@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -17,9 +18,14 @@ import {
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products">;
+type Status = Pick<Tables<"statuses">, "id" | "name">;
 type ProductForm = {
   client_id: string;
   product_name: string;
+  quantity_items: string;
+  quantity_boxes: string;
+  tracking_number: string;
+  carrier: string;
   sku: string;
   fnsku: string;
   asin: string;
@@ -33,6 +39,10 @@ type ProductForm = {
 const emptyForm: ProductForm = {
   client_id: "",
   product_name: "",
+  quantity_items: "1",
+  quantity_boxes: "1",
+  tracking_number: "",
+  carrier: "",
   sku: "",
   fnsku: "",
   asin: "",
@@ -45,7 +55,10 @@ const emptyForm: ProductForm = {
 
 export function ProductFormClient({ productId }: { productId?: string }) {
   const router = useRouter();
+  const { role, clientId } = useAuth();
+  const isClientPortal = role === "client";
   const [clients, setClients] = useState<Client[]>([]);
+  const [statuses, setStatuses] = useState<Status[]>([]);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,12 +68,19 @@ export function ProductFormClient({ productId }: { productId?: string }) {
     setLoading(true);
     setError(null);
 
-    const [clientsResult, productResult] = await Promise.all([
-      supabase
+    const clientsQuery = supabase
         .from("clients")
         .select("id, company_name")
         .is("deleted_at", null)
-        .order("company_name"),
+        .order("company_name");
+    const statusesQuery = supabase
+      .from("statuses")
+      .select("id, name")
+      .eq("category", "incoming_shipment")
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order("sort_order");
+    const productQuery =
       productId
         ? supabase
           .from("products")
@@ -68,13 +88,28 @@ export function ProductFormClient({ productId }: { productId?: string }) {
           .eq("id", productId)
           .is("deleted_at", null)
           .single()
-        : Promise.resolve({ data: null, error: null }),
+        : Promise.resolve({ data: null, error: null });
+
+    if (isClientPortal && clientId) {
+      clientsQuery.eq("id", clientId);
+    }
+
+    const [clientsResult, statusesResult, productResult] = await Promise.all([
+      isClientPortal ? Promise.resolve({ data: [], error: null }) : clientsQuery,
+      statusesQuery,
+      productQuery,
     ]);
 
     if (clientsResult.error) {
       setError(clientsResult.error.message);
     } else {
       setClients(clientsResult.data ?? []);
+    }
+
+    if (statusesResult.error) {
+      setError(statusesResult.error.message);
+    } else {
+      setStatuses(statusesResult.data ?? []);
     }
 
     if (productResult.error) {
@@ -84,6 +119,10 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       setForm({
         client_id: product.client_id,
         product_name: product.product_name,
+        quantity_items: "1",
+        quantity_boxes: "1",
+        tracking_number: "",
+        carrier: "",
         sku: product.sku ?? "",
         fnsku: product.fnsku ?? "",
         asin: product.asin ?? "",
@@ -93,10 +132,12 @@ export function ProductFormClient({ productId }: { productId?: string }) {
         notes: product.notes ?? "",
         active: product.active,
       });
+    } else if (isClientPortal && clientId) {
+      setForm((current) => ({ ...current, client_id: clientId }));
     }
 
     setLoading(false);
-  }, [productId]);
+  }, [clientId, isClientPortal, productId]);
 
   useEffect(() => {
     let active = true;
@@ -124,6 +165,19 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       return;
     }
 
+    const quantityItems = Number(form.quantity_items);
+    const quantityBoxes = Number(form.quantity_boxes);
+
+    if (isClientPortal && (!Number.isInteger(quantityItems) || quantityItems <= 0)) {
+      setError("Quantity of items must be a whole number greater than 0.");
+      return;
+    }
+
+    if (isClientPortal && (!Number.isInteger(quantityBoxes) || quantityBoxes < 0)) {
+      setError("Quantity of boxes must be a whole number zero or greater.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -142,12 +196,84 @@ export function ProductFormClient({ productId }: { productId?: string }) {
 
     const result = productId
       ? await supabase.from("products").update(payload).eq("id", productId)
-      : await supabase.from("products").insert(payload);
+      : await supabase.from("products").insert(payload).select("id").single();
 
     if (result.error) {
       setError(result.error.message);
       setSaving(false);
       return;
+    }
+
+    if (isClientPortal && !productId) {
+      const productIdValue = "data" in result ? result.data?.id : null;
+      const inTransitStatus =
+        statuses.find((status) => status.name === "In Transit") ??
+        statuses.find((status) => status.name === "Expected") ??
+        statuses[0];
+
+      if (!productIdValue || !inTransitStatus) {
+        setError("Unable to create inbound product record.");
+        setSaving(false);
+        return;
+      }
+
+      const trackingNumbers = form.tracking_number.trim() ? [form.tracking_number.trim()] : [];
+      const carrier = form.carrier.trim() || "Client supplied";
+      const shipmentResult = await supabase
+        .from("incoming_shipments")
+        .insert({
+          client_id: form.client_id,
+          carrier,
+          tracking_numbers: trackingNumbers,
+          number_of_boxes: quantityBoxes,
+          status_id: inTransitStatus.id,
+          notes: form.notes.trim() || null,
+        })
+        .select("id")
+        .single();
+
+      if (shipmentResult.error || !shipmentResult.data) {
+        setError(shipmentResult.error?.message ?? "Unable to create inbound shipment.");
+        setSaving(false);
+        return;
+      }
+
+      let trackingBoxId: string | null = null;
+
+      if (trackingNumbers[0]) {
+        const { data: trackingBox, error: trackingBoxError } = await supabase
+          .from("incoming_tracking_boxes")
+          .insert({
+            shipment_id: shipmentResult.data.id,
+            tracking_number: trackingNumbers[0],
+            carrier,
+            status: "In Transit",
+          })
+          .select("id")
+          .single();
+
+        if (trackingBoxError) {
+          setError(trackingBoxError.message);
+          setSaving(false);
+          return;
+        }
+
+        trackingBoxId = trackingBox.id;
+      }
+
+      const { error: itemError } = await supabase.from("incoming_items").insert({
+        shipment_id: shipmentResult.data.id,
+        product_id: productIdValue,
+        tracking_box_id: trackingBoxId,
+        expected_quantity: quantityItems,
+        notes: form.notes.trim() || null,
+      });
+
+      if (itemError) {
+        setError(itemError.message);
+        setSaving(false);
+        return;
+      }
     }
 
     router.push("/products");
@@ -171,48 +297,72 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       <ErrorBanner message={error} />
       <Panel title={productId ? "Edit product" : "Add product"}>
         <form className="grid gap-4 lg:grid-cols-2" onSubmit={(event) => void saveProduct(event)}>
-          <Field label="Client">
-            <select className={inputClassName} required value={form.client_id} onChange={(event) => setForm({ ...form, client_id: event.target.value })}>
-              <option value="">Select client</option>
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.company_name}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {isClientPortal ? null : (
+            <Field label="Client">
+              <select className={inputClassName} required value={form.client_id} onChange={(event) => setForm({ ...form, client_id: event.target.value })}>
+                <option value="">Select client</option>
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.company_name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Product name">
             <input className={inputClassName} required value={form.product_name} onChange={(event) => setForm({ ...form, product_name: event.target.value })} />
           </Field>
-          <Field label="SKU">
-            <input className={inputClassName} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
-          </Field>
-          <Field label="FNSKU">
-            <input className={inputClassName} value={form.fnsku} onChange={(event) => setForm({ ...form, fnsku: event.target.value })} />
-          </Field>
-          <Field label="ASIN">
-            <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
-          </Field>
-          <Field label="Barcode">
-            <input className={inputClassName} value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} />
-          </Field>
-          <Field label="Barcode type">
-            <input className={inputClassName} placeholder="Code 128, UPC, QR" value={form.barcode_type} onChange={(event) => setForm({ ...form, barcode_type: event.target.value })} />
-          </Field>
-          <Field label="Photo URL">
-            <input className={inputClassName} value={form.photo_url} onChange={(event) => setForm({ ...form, photo_url: event.target.value })} />
-          </Field>
+          {isClientPortal ? (
+            <>
+              <Field label="Quantity of items">
+                <input className={inputClassName} min="1" required type="number" value={form.quantity_items} onChange={(event) => setForm({ ...form, quantity_items: event.target.value })} />
+              </Field>
+              <Field label="Quantity of boxes">
+                <input className={inputClassName} min="0" required type="number" value={form.quantity_boxes} onChange={(event) => setForm({ ...form, quantity_boxes: event.target.value })} />
+              </Field>
+              <Field label="Tracking number">
+                <input className={inputClassName} value={form.tracking_number} onChange={(event) => setForm({ ...form, tracking_number: event.target.value })} />
+              </Field>
+              <Field label="Carrier">
+                <input className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
+              </Field>
+            </>
+          ) : null}
+          {isClientPortal ? null : (
+            <>
+              <Field label="SKU">
+                <input className={inputClassName} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
+              </Field>
+              <Field label="FNSKU">
+                <input className={inputClassName} value={form.fnsku} onChange={(event) => setForm({ ...form, fnsku: event.target.value })} />
+              </Field>
+              <Field label="ASIN">
+                <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
+              </Field>
+              <Field label="Barcode">
+                <input className={inputClassName} value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} />
+              </Field>
+              <Field label="Barcode type">
+                <input className={inputClassName} placeholder="Code 128, UPC, QR" value={form.barcode_type} onChange={(event) => setForm({ ...form, barcode_type: event.target.value })} />
+              </Field>
+              <Field label="Photo URL">
+                <input className={inputClassName} value={form.photo_url} onChange={(event) => setForm({ ...form, photo_url: event.target.value })} />
+              </Field>
+            </>
+          )}
           <div className="lg:col-span-2">
             <Field label="Notes">
               <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 lg:col-span-2">
-            <input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />
-            Active product
-          </label>
+          {isClientPortal ? null : (
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 lg:col-span-2">
+              <input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />
+              Active product
+            </label>
+          )}
           <div className="flex gap-2 lg:col-span-2">
-            <Button type="submit" disabled={saving || clients.length === 0}>
+            <Button type="submit" disabled={saving || (!isClientPortal && clients.length === 0)}>
               {saving ? "Saving..." : "Save product"}
             </Button>
             <Link href="/products" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">

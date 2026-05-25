@@ -92,11 +92,11 @@ export const clientPortalRoutes: DashboardRoute[] = [
     status: "Live",
   },
   {
-    href: "/inventory",
-    label: "My Inventory",
-    eyebrow: "Stock",
-    title: "My Inventory",
-    description: "Review available, reserved, processing, shipped, and damaged inventory balances.",
+    href: "/products",
+    label: "My Products",
+    eyebrow: "Products",
+    title: "My Products",
+    description: "Review product movement from in transit through available stock.",
     status: "Live",
   },
   {

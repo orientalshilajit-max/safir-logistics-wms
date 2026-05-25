@@ -12,7 +12,6 @@ const clientRestrictedPaths = [
   "/services",
   "/reports",
   "/client-pricing-overrides",
-  "/products",
   "/outbound-shipments",
 ];
 

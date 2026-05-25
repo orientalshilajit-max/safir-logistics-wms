@@ -168,6 +168,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         client_id: isClientPortal && clientId ? clientId : current.client_id,
         status_id:
           current.status_id ||
+          loadedStatuses.find((status) => status.name === "In Transit")?.id ||
           loadedStatuses.find((status) => status.name === "Expected")?.id ||
           loadedStatuses[0]?.id ||
           "",
@@ -214,7 +215,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const validLines = form.lines.filter((line) => line.product_id);
 
     if (!form.client_id || !form.carrier.trim() || !form.status_id) {
-      setError("Client, carrier, and status are required.");
+      setError(isClientPortal ? "Carrier is required." : "Client, carrier, and status are required.");
       setSaving(false);
       return;
     }
@@ -364,16 +365,18 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             <Field label="Expected arrival">
               <input className={inputClassName} type="date" value={form.expected_arrival_date} onChange={(event) => setForm({ ...form, expected_arrival_date: event.target.value })} />
             </Field>
-            <Field label="Status">
-              <select className={inputClassName} required value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })}>
-                <option value="">Select status</option>
-                {statuses.map((status) => (
-                  <option key={status.id} value={status.id}>
-                    {status.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {isClientPortal ? null : (
+              <Field label="Status">
+                <select className={inputClassName} required value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })}>
+                  <option value="">Select status</option>
+                  {statuses.map((status) => (
+                    <option key={status.id} value={status.id}>
+                      {status.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
           </div>
           <Field label="Tracking numbers">
             <textarea className={textAreaClassName} placeholder="One per line or comma separated" value={form.tracking_numbers} onChange={(event) => setForm({ ...form, tracking_numbers: event.target.value })} />
