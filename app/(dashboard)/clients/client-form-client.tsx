@@ -50,6 +50,7 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
   const [loading, setLoading] = useState(Boolean(clientId));
   const [saving, setSaving] = useState(false);
   const [creatingAccess, setCreatingAccess] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +191,41 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
     setCreatingAccess(false);
   }
 
+  async function sendPasswordReset() {
+    if (!client || resettingPassword) return;
+
+    setResettingPassword(true);
+    setError(null);
+    setMessage(null);
+    setInstructions([]);
+
+    const response = await fetch(`/api/clients/${client.id}/password-reset`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session?.access_token ?? ""}`,
+        "Content-Type": "application/json",
+      },
+    });
+    const body = (await response.json()) as {
+      message?: string;
+      detail?: string;
+      error?: string;
+      rate_limited?: boolean;
+    };
+
+    if (!response.ok) {
+      setError(body.error ?? "Unable to send password reset email.");
+    } else {
+      setMessage(
+        body.rate_limited
+          ? "Email rate limit reached"
+          : body.message ?? "Password reset email sent.",
+      );
+    }
+
+    setResettingPassword(false);
+  }
+
   if (loading) {
     return <LoadingState label="Loading client..." />;
   }
@@ -270,20 +306,30 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
             <p className="text-sm text-slate-600">
               Send an invite and link this client to a Supabase Auth user.
             </p>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={creatingAccess || cooldownSeconds > 0}
-              onClick={() => void createLoginAccess(client.login_status === "no login" ? "create" : "resend")}
-            >
-              {creatingAccess
-                ? "Sending..."
-                : cooldownSeconds > 0
-                  ? `${cooldownSeconds}s`
-                  : client.login_status === "no login"
-                    ? "Create Login Access"
-                    : "Resend Invite"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={creatingAccess || cooldownSeconds > 0}
+                onClick={() => void createLoginAccess(client.login_status === "no login" ? "create" : "resend")}
+              >
+                {creatingAccess
+                  ? "Sending..."
+                  : cooldownSeconds > 0
+                    ? `${cooldownSeconds}s`
+                    : client.login_status === "no login"
+                      ? "Create Login Access"
+                      : "Resend Invite"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={resettingPassword || client.login_status === "no login"}
+                onClick={() => void sendPasswordReset()}
+              >
+                {resettingPassword ? "Sending..." : "Reset Client Password"}
+              </Button>
+            </div>
           </div>
           {instructions.length > 0 ? (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">

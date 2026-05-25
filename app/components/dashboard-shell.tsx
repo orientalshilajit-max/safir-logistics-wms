@@ -34,6 +34,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="flex items-center gap-3">
                 <NotificationMenu />
+                <Link
+                  href="/settings"
+                  className="hidden h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 sm:inline-flex"
+                >
+                  Account
+                </Link>
                 <LogoutButton />
                 <div className="flex size-10 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white">
                   SL

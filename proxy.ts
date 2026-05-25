@@ -11,7 +11,6 @@ const clientRestrictedPaths = [
   "/clients",
   "/services",
   "/reports",
-  "/settings",
   "/client-pricing-overrides",
   "/products",
   "/outbound-shipments",
@@ -20,10 +19,11 @@ const clientRestrictedPaths = [
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const isLogin = pathname === "/login";
+  const isResetPassword = pathname === "/reset-password";
   const accessToken = request.cookies.get(AUTH_TOKEN_COOKIE)?.value;
   const hasSession = Boolean(accessToken);
 
-  if (!hasSession && !isLogin) {
+  if (!hasSession && !isLogin && !isResetPassword) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);
