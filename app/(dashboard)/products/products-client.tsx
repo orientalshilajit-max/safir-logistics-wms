@@ -19,7 +19,10 @@ type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products"> & {
   clients: Client | null;
 };
-type InventoryRow = Pick<Tables<"inventory">, "product_id" | "available_qty">;
+type InventoryRow = Pick<
+  Tables<"inventory">,
+  "product_id" | "available_qty" | "reserved_qty" | "processing_qty" | "updated_at"
+>;
 type IncomingProductLine = Pick<
   Tables<"incoming_items">,
   | "inventory_posted_at"
@@ -43,6 +46,8 @@ export function ProductsClient() {
   const [clientFilter, setClientFilter] = useState("all");
   const [productQuery, setProductQuery] = useState("");
   const [asinQuery, setAsinQuery] = useState("");
+  const [clientStatusFilter, setClientStatusFilter] = useState("all");
+  const [stockStatusFilter, setStockStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
@@ -67,7 +72,9 @@ export function ProductsClient() {
       const matchesProduct =
         !productSearch ||
         product.product_name.toLowerCase().includes(productSearch) ||
-        (product.sku ?? "").toLowerCase().includes(productSearch);
+        (product.sku ?? "").toLowerCase().includes(productSearch) ||
+        (product.asin ?? "").toLowerCase().includes(productSearch) ||
+        (product.barcode ?? "").toLowerCase().includes(productSearch);
       const matchesAsin = !asinSearch || (product.asin ?? "").toLowerCase().includes(asinSearch);
 
       return matchesClient && matchesProduct && matchesAsin;
@@ -85,7 +92,7 @@ export function ProductsClient() {
       .order("product_name");
     const inventoryQuery = supabase
       .from("inventory")
-      .select("product_id, available_qty")
+      .select("product_id, available_qty, reserved_qty, processing_qty, updated_at")
       .is("deleted_at", null);
     const incomingQuery = supabase
       .from("incoming_items")
@@ -147,6 +154,121 @@ export function ProductsClient() {
     } else {
       await loadData();
     }
+  }
+
+  const clientFilteredProducts = useMemo(() => {
+    if (!isClientPortal) return filteredProducts;
+
+    return filteredProducts.filter((product) => {
+      const summary = getClientProductSummary(product, inventoryRows, incomingLines);
+      const matchesStatus = clientStatusFilter === "all" || summary.status === clientStatusFilter;
+      const matchesStock =
+        stockStatusFilter === "all" ||
+        (stockStatusFilter === "in_stock" && summary.inStock > 0) ||
+        (stockStatusFilter === "incoming" && summary.incomingUnits > 0) ||
+        (stockStatusFilter === "reserved" && summary.reservedUnits > 0);
+
+      return matchesStatus && matchesStock;
+    });
+  }, [clientStatusFilter, filteredProducts, incomingLines, inventoryRows, isClientPortal, stockStatusFilter]);
+
+  const clientProductStats = useMemo(() => {
+    return products.reduce(
+      (totals, product) => {
+        const summary = getClientProductSummary(product, inventoryRows, incomingLines);
+
+        totals.totalProducts += 1;
+        if (product.active) totals.activeProducts += 1;
+        totals.totalInStock += summary.inStock;
+        totals.incomingUnits += summary.incomingUnits;
+
+        return totals;
+      },
+      { totalProducts: 0, activeProducts: 0, totalInStock: 0, incomingUnits: 0 },
+    );
+  }, [incomingLines, inventoryRows, products]);
+
+  if (isClientPortal) {
+    return (
+      <div className="space-y-5">
+        <ErrorBanner message={error} />
+
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
+          <Link
+            href="/products/new"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            <span className="mr-2 text-base leading-none">+</span>
+            Add Product
+          </Link>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ClientStat label="Total Products" value={clientProductStats.totalProducts} sublabel="All time" />
+          <ClientStat label="Active Products" value={clientProductStats.activeProducts} sublabel="In stock or incoming" />
+          <ClientStat label="Total In Stock" value={clientProductStats.totalInStock} sublabel="Units" />
+          <ClientStat label="Incoming Units" value={clientProductStats.incomingUnits} sublabel="Units on the way" />
+        </section>
+
+        <Panel title="Products">
+          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_11rem_11rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search by product name, SKU, ASIN or UPC"
+              value={productQuery}
+              onChange={(event) => setProductQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={clientStatusFilter}
+              onChange={(event) => setClientStatusFilter(event.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="Available">Available</option>
+              <option value="Receiving">Receiving</option>
+              <option value="In Transit">In Transit</option>
+              <option value="Issue">Issue</option>
+            </select>
+            <select
+              className={inputClassName}
+              value={stockStatusFilter}
+              onChange={(event) => setStockStatusFilter(event.target.value)}
+            >
+              <option value="all">All stock</option>
+              <option value="in_stock">In stock</option>
+              <option value="incoming">Incoming</option>
+              <option value="reserved">Reserved</option>
+            </select>
+          </div>
+
+          {loading ? (
+            <LoadingState label="Loading products..." />
+          ) : clientFilteredProducts.length === 0 ? (
+            <EmptyState
+              title="No products found"
+              body="Add a product or adjust the filters."
+              action={
+                <Link
+                  href="/products/new"
+                  className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  + Add Product
+                </Link>
+              }
+            />
+          ) : (
+            <div className="max-h-[42rem] overflow-auto">
+              <ClientProductsTable
+                products={clientFilteredProducts}
+                inventoryRows={inventoryRows}
+                incomingLines={incomingLines}
+              />
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
   }
 
   return (
@@ -269,16 +391,18 @@ function ClientProductsTable({
   incomingLines: IncomingProductLine[];
 }) {
   return (
-    <table className="w-full min-w-[860px] text-left text-sm tabular-nums">
+    <table className="w-full min-w-[1080px] text-left text-sm tabular-nums">
       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
         <tr>
-          <th className="px-4 py-3 font-semibold">Product Name</th>
-          <th className="px-4 py-3 font-semibold">Quantity of Items</th>
-          <th className="px-4 py-3 font-semibold">Quantity of Boxes</th>
+          <th className="px-4 py-3 font-semibold">Product</th>
+          <th className="px-4 py-3 font-semibold">SKU</th>
+          <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
+          <th className="px-4 py-3 font-semibold">In Stock Units</th>
+          <th className="px-4 py-3 font-semibold">Incoming Units</th>
+          <th className="px-4 py-3 font-semibold">Reserved Units</th>
+          <th className="px-4 py-3 font-semibold">Last Updated</th>
           <th className="px-4 py-3 font-semibold">Status</th>
-          <th className="px-4 py-3 font-semibold">Notes</th>
-          <th className="px-4 py-3 font-semibold">Date Added</th>
-          <th className="px-4 py-3 font-semibold">Action/View</th>
+          <th className="px-4 py-3 font-semibold">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100">
@@ -288,26 +412,54 @@ function ClientProductsTable({
           return (
             <tr key={product.id} className="hover:bg-slate-50">
               <td className="px-4 py-3 font-medium text-slate-950">{product.product_name}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.items}</td>
-              <td className="px-4 py-3 text-slate-600">{summary.boxes}</td>
+              <td className="px-4 py-3 text-slate-600">{product.sku ?? "-"}</td>
+              <td className="px-4 py-3 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
+              <td className="px-4 py-3 text-slate-600">{summary.inStock}</td>
+              <td className="px-4 py-3 text-slate-600">{summary.incomingUnits}</td>
+              <td className="px-4 py-3 text-slate-600">{summary.reservedUnits}</td>
+              <td className="px-4 py-3 text-slate-600">{formatDate(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-4 py-3">
                 <StatusBadge tone={clientProductStatusTone(summary.status)}>{summary.status}</StatusBadge>
               </td>
-              <td className="max-w-xs truncate px-4 py-3 text-slate-600">{product.notes ?? "-"}</td>
-              <td className="px-4 py-3 text-slate-600">{formatDate(product.created_at)}</td>
               <td className="px-4 py-3">
-                <Link
-                  href={`/incoming-shipments?status=${summary.status === "Issue" ? "issue" : "all"}`}
-                  className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  View
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={`/products/${product.id}/edit`}
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Edit
+                  </Link>
+                  <Link
+                    href={`/incoming-shipments?status=${summary.status === "Issue" ? "issue" : "all"}`}
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    View
+                  </Link>
+                </div>
               </td>
             </tr>
           );
         })}
       </tbody>
     </table>
+  );
+}
+
+function ClientStat({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: number;
+  sublabel: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
+      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    </div>
   );
 }
 
@@ -319,15 +471,26 @@ function getClientProductSummary(
   const productInventory = inventoryRows.filter((row) => row.product_id === product.id);
   const productIncoming = incomingLines.filter((line) => line.product_id === product.id);
   const availableQty = productInventory.reduce((sum, row) => sum + row.available_qty, 0);
-  const expectedQty = productIncoming.reduce((sum, line) => sum + line.expected_quantity, 0);
+  const reservedQty = productInventory.reduce((sum, row) => sum + row.reserved_qty, 0);
+  const incomingQty = productIncoming
+    .filter((line) => !line.inventory_posted_at)
+    .reduce((sum, line) => sum + line.expected_quantity, 0);
   const boxes = productIncoming.reduce((sum, line) => {
     return sum + (line.incoming_shipments?.number_of_boxes ?? 0);
   }, 0);
   const status = getClientProductStatus(availableQty, productIncoming);
+  const lastUpdated = productInventory
+    .map((row) => row.updated_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
 
   return {
     boxes,
-    items: availableQty || expectedQty,
+    incomingUnits: incomingQty,
+    inStock: availableQty,
+    lastUpdated,
+    reservedUnits: reservedQty,
     status,
   };
 }

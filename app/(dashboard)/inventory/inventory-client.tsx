@@ -33,6 +33,8 @@ export function InventoryClient() {
     damaged_qty: "0",
   });
   const [stockFilter, setStockFilter] = useState<"all" | "available" | "reserved" | "damaged">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [productFilter, setProductFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +64,36 @@ export function InventoryClient() {
 
   const isClientPortal = role === "client";
   const isAdmin = role === "admin";
+  const clientFilteredRows = useMemo(() => {
+    const normalized = searchQuery.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      const productName = row.products?.product_name ?? "";
+      const sku = row.products?.sku ?? "";
+      const asin = row.products?.asin ?? "";
+      const matchesSearch =
+        !normalized ||
+        productName.toLowerCase().includes(normalized) ||
+        sku.toLowerCase().includes(normalized) ||
+        asin.toLowerCase().includes(normalized);
+      const matchesProduct = productFilter === "all" || row.product_id === productFilter;
+      const matchesStock =
+        stockFilter === "all" ||
+        (stockFilter === "available" && row.available_qty > 0) ||
+        (stockFilter === "reserved" && row.reserved_qty > 0) ||
+        (stockFilter === "damaged" && row.damaged_qty > 0);
+
+      return matchesSearch && matchesProduct && matchesStock;
+    });
+  }, [productFilter, rows, searchQuery, stockFilter]);
+  const productOptions = useMemo(
+    () =>
+      rows
+        .map((row) => ({ id: row.product_id, name: row.products?.product_name ?? "Unknown product" }))
+        .filter((item, index, list) => list.findIndex((option) => option.id === item.id) === index)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [rows],
+  );
 
   const loadInventory = useCallback(async () => {
     const query = supabase
@@ -133,6 +165,106 @@ export function InventoryClient() {
     }
 
     setSavingId(null);
+  }
+
+  if (isClientPortal) {
+    const incomingUnits = rows.reduce((sum, row) => sum + Math.max(row.expected_qty - row.received_qty, 0), 0);
+    const storageBoxes = rows.filter((row) => row.available_qty + row.reserved_qty + row.processing_qty > 0).length;
+
+    return (
+      <div className="space-y-5">
+        <ErrorBanner message={error} />
+
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Inventory</h2>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <Metric label="Total Units in Stock" value={totals.available} />
+          <Metric label="Reserved Units" value={rows.reduce((sum, row) => sum + row.reserved_qty, 0)} />
+          <Metric label="Incoming Units" value={incomingUnits} />
+          <Metric label="Units in Process" value={rows.reduce((sum, row) => sum + row.processing_qty, 0)} />
+          <Metric label="Total Storage / Boxes" value={storageBoxes} />
+        </section>
+
+        <Panel title="Inventory">
+          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem_14rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search by product name, SKU, ASIN"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={stockFilter}
+              onChange={(event) => setStockFilter(event.target.value as typeof stockFilter)}
+            >
+              <option value="all">All stock</option>
+              <option value="available">Available</option>
+              <option value="reserved">Reserved</option>
+              <option value="damaged">Damaged</option>
+            </select>
+            <select
+              className={inputClassName}
+              value={productFilter}
+              onChange={(event) => setProductFilter(event.target.value)}
+            >
+              <option value="all">All products</option>
+              {productOptions.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {loading ? (
+            <LoadingState label="Loading inventory..." />
+          ) : clientFilteredRows.length === 0 ? (
+            <EmptyState title="No inventory found" body="Received inventory will appear here." />
+          ) : (
+            <div className="max-h-[42rem] overflow-auto">
+              <table className="w-full min-w-[1120px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Product</th>
+                    <th className="px-4 py-3 font-semibold">SKU</th>
+                    <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
+                    <th className="px-4 py-3 font-semibold">In Stock Units</th>
+                    <th className="px-4 py-3 font-semibold">Reserved Units</th>
+                    <th className="px-4 py-3 font-semibold">Incoming Units</th>
+                    <th className="px-4 py-3 font-semibold">In Process Units</th>
+                    <th className="px-4 py-3 font-semibold">Available Units</th>
+                    <th className="px-4 py-3 font-semibold">Storage Boxes</th>
+                    <th className="px-4 py-3 font-semibold">Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {clientFilteredRows.map((row) => {
+                    const incoming = Math.max(row.expected_qty - row.received_qty, 0);
+                    return (
+                      <tr key={row.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-slate-950">{row.products?.product_name ?? "Unknown product"}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.products?.sku ?? "-"}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.products?.asin ?? row.products?.fnsku ?? "-"}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.reserved_qty}</td>
+                        <td className="px-4 py-3 text-slate-600">{incoming}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.processing_qty}</td>
+                        <td className="px-4 py-3 font-semibold text-emerald-700">{row.available_qty}</td>
+                        <td className="px-4 py-3 text-slate-600">{row.available_qty > 0 ? 1 : 0}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatDate(row.updated_at)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
   }
 
   return (
@@ -275,4 +407,12 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">{value}</p>
     </div>
   );
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
 }

@@ -19,6 +19,10 @@ import {
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type ServiceRequest = Tables<"service_requests"> & {
   clients: Client | null;
+  request_items?: {
+    requested_quantity: number;
+    products: Pick<Tables<"products">, "product_name" | "sku"> | null;
+  }[];
 };
 
 const requestStatuses: ServiceRequest["status"][] = [
@@ -52,7 +56,7 @@ export function RequestsClient() {
 
     const queryBuilder = supabase
       .from("service_requests")
-      .select("*, clients(id, company_name)")
+      .select("*, clients(id, company_name), request_items(requested_quantity, products(product_name, sku))")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
@@ -87,7 +91,14 @@ export function RequestsClient() {
         !normalized ||
         request.request_number.toLowerCase().includes(normalized) ||
         request.clients?.company_name.toLowerCase().includes(normalized) ||
-        getRequestServiceType(request.notes).toLowerCase().includes(normalized);
+        getRequestServiceType(request.notes).toLowerCase().includes(normalized) ||
+        (request.request_items ?? []).some((item) => {
+          const product = item.products;
+          return (
+            product?.product_name.toLowerCase().includes(normalized) ||
+            product?.sku?.toLowerCase().includes(normalized)
+          );
+        });
 
       return matchesStatus && matchesQuery;
     });
@@ -179,6 +190,136 @@ export function RequestsClient() {
     }
 
     setUpdatingStatusId(null);
+  }
+
+  if (isClientPortal) {
+    const orderStats = requests.reduce(
+      (totals, request) => {
+        totals.total += 1;
+        const normalized = normalizeRequestStatus(request.status);
+        if (normalized === "Submitted") totals.pending += 1;
+        if (normalized === "In Progress" || normalized === "Approved" || normalized === "Ready to Ship") totals.inProgress += 1;
+        if (normalized === "Completed") totals.completed += 1;
+        if (request.status === "Shipped" || request.status === "Completed") totals.invoiced += 1;
+        return totals;
+      },
+      { total: 0, pending: 0, inProgress: 0, completed: 0, invoiced: 0 },
+    );
+
+    return (
+      <div className="space-y-5">
+        <ErrorBanner message={error} />
+
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Order Service</h2>
+          <Link
+            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+            href="/requests/new"
+          >
+            <span className="mr-2 text-base leading-none">+</span>
+            New Service Request
+          </Link>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <OrderMetric label="Total Orders" value={orderStats.total} sublabel="All time" />
+          <OrderMetric label="Pending Approval" value={orderStats.pending} sublabel="Orders" />
+          <OrderMetric label="In Progress" value={orderStats.inProgress} sublabel="Orders" />
+          <OrderMetric label="Completed" value={orderStats.completed} sublabel="Orders" />
+          <OrderMetric label="Invoiced" value={orderStats.invoiced} sublabel="Orders" />
+        </section>
+
+        <Panel title="Order Service">
+          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search by order ID, product, SKU, service type"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">All statuses</option>
+              {requestStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {normalizeRequestStatus(status)}
+                </option>
+              ))}
+            </select>
+            <select className={inputClassName} value="all" disabled>
+              <option value="all">All service types</option>
+            </select>
+          </div>
+
+          {loading ? (
+            <LoadingState label="Loading orders..." />
+          ) : filteredRequests.length === 0 ? (
+            <EmptyState
+              title="No service orders found"
+              body="Create a service request when you have available inventory ready for work."
+              action={
+                <Link
+                  className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                  href="/requests/new"
+                >
+                  + New Service Request
+                </Link>
+              }
+            />
+          ) : (
+            <div className="space-y-4">
+              <div className="max-h-[36rem] overflow-auto">
+                <table className="w-full min-w-[1080px] text-left text-sm tabular-nums">
+                  <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Order ID</th>
+                      <th className="px-4 py-3 font-semibold">Created Date</th>
+                      <th className="px-4 py-3 font-semibold">Service Type</th>
+                      <th className="px-4 py-3 font-semibold">Product / SKU</th>
+                      <th className="px-4 py-3 font-semibold">Quantity</th>
+                      <th className="px-4 py-3 font-semibold">Status</th>
+                      <th className="px-4 py-3 font-semibold">Requested By</th>
+                      <th className="px-4 py-3 font-semibold">Target Date</th>
+                      <th className="px-4 py-3 font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredRequests.map((request) => (
+                      <tr key={request.id} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-blue-700">{request.request_number}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatDate(request.created_at)}</td>
+                        <td className="px-4 py-3 text-slate-600">{getRequestServiceType(request.notes)}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatRequestProduct(request)}</td>
+                        <td className="px-4 py-3 text-slate-600">{request.request_items?.reduce((sum, item) => sum + item.requested_quantity, 0) ?? "-"}</td>
+                        <td className="px-4 py-3">
+                          <StatusBadge tone={statusTone(request.status)}>{normalizeRequestStatus(request.status)}</StatusBadge>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">You</td>
+                        <td className="px-4 py-3 text-slate-600">-</td>
+                        <td className="px-4 py-3">
+                          <RequestActions
+                            isAdmin={false}
+                            request={request}
+                            disabled={updatingStatusId === request.id}
+                            onArchive={() => void archiveRequest(request)}
+                            onSubmitDraft={() => void submitDraftRequest(request)}
+                            onStatus={(status) => void updateRequestStatus(request, status)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <ClientOrderDetails request={filteredRequests[0]} />
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
   }
 
   return (
@@ -397,6 +538,95 @@ function RequestActions({
   }
 
   return <div className="flex flex-wrap gap-2">{actions}</div>;
+}
+
+function OrderMetric({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: number;
+  sublabel: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
+      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    </div>
+  );
+}
+
+function ClientOrderDetails({ request }: { request: ServiceRequest }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-950">Order {request.request_number}</p>
+          <p className="text-xs text-slate-500">{getRequestServiceType(request.notes)}</p>
+        </div>
+        <Link
+          className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          href={`/requests/${request.id}`}
+        >
+          View Full Details
+        </Link>
+      </div>
+      <div className="border-b border-slate-200 px-4 pt-3">
+        <div className="flex gap-4 text-sm font-semibold text-slate-600">
+          <span className="border-b-2 border-blue-600 pb-3 text-blue-700">Items</span>
+          <span className="pb-3">Files</span>
+          <span className="pb-3">Notes</span>
+          <span className="pb-3">History</span>
+        </div>
+      </div>
+      <div className="overflow-auto p-4">
+        <table className="w-full min-w-[720px] text-left text-sm tabular-nums">
+          <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-3 font-semibold">Product</th>
+              <th className="px-3 py-3 font-semibold">SKU</th>
+              <th className="px-3 py-3 font-semibold">Quantity</th>
+              <th className="px-3 py-3 font-semibold">Service Details</th>
+              <th className="px-3 py-3 font-semibold">Packaging</th>
+              <th className="px-3 py-3 font-semibold">Special Instructions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {(request.request_items ?? []).map((item, index) => (
+              <tr key={`${request.id}-${index}`}>
+                <td className="px-3 py-3 font-medium text-slate-950">{item.products?.product_name ?? "Unknown product"}</td>
+                <td className="px-3 py-3 text-slate-600">{item.products?.sku ?? "-"}</td>
+                <td className="px-3 py-3 text-slate-600">{item.requested_quantity}</td>
+                <td className="px-3 py-3 text-slate-600">{getRequestServiceType(request.notes)}</td>
+                <td className="px-3 py-3 text-slate-600">{request.box_count ? `${request.box_count} boxes` : "-"}</td>
+                <td className="px-3 py-3 text-slate-600">{request.notes ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function formatRequestProduct(request: ServiceRequest) {
+  const items = request.request_items ?? [];
+  const firstItem = items[0];
+
+  if (!firstItem) return "-";
+  if (items.length > 1) return "Multiple Products";
+
+  return `${firstItem.products?.product_name ?? "Unknown product"}${firstItem.products?.sku ? ` (${firstItem.products.sku})` : ""}`;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
 function archiveButton(disabled: boolean, onArchive: () => void) {

@@ -78,6 +78,7 @@ export function InvoicesClient() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState<string | null>(null);
@@ -93,15 +94,16 @@ export function InvoicesClient() {
 
     return invoices.filter((invoice) => {
       const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
+      const matchesDate = dateFilter === "all" || isWithinDateFilter(invoice.issue_date, dateFilter);
       const matchesQuery =
         !normalized ||
         invoice.invoice_number.toLowerCase().includes(normalized) ||
         invoice.clients?.company_name.toLowerCase().includes(normalized) ||
         invoice.service_requests?.request_number.toLowerCase().includes(normalized);
 
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesQuery && matchesDate;
     });
-  }, [invoices, query, statusFilter]);
+  }, [dateFilter, invoices, query, statusFilter]);
 
   const loadInvoices = useCallback(async () => {
     setError(null);
@@ -304,6 +306,138 @@ export function InvoicesClient() {
             }
           : invoice,
       ),
+    );
+  }
+
+  if (isClientPortal) {
+    const totalInvoices = invoices.length;
+    const unpaidTotal = invoices
+      .filter((invoice) => ["Sent", "Unpaid", "Partial Paid"].includes(invoice.status))
+      .reduce((sum, invoice) => sum + Number(invoice.balance_due ?? 0), 0);
+    const overdueTotal = invoices
+      .filter((invoice) => invoice.status === "Overdue")
+      .reduce((sum, invoice) => sum + Number(invoice.balance_due ?? 0), 0);
+    const paidTotal = invoices
+      .filter((invoice) => invoice.status === "Paid")
+      .reduce((sum, invoice) => sum + Number(invoice.paid_amount ?? invoice.total_amount ?? 0), 0);
+
+    return (
+      <div className="space-y-5">
+        <ErrorBanner message={error} />
+
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Invoices</h2>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <InvoiceMetric label="Total Invoices" value={String(totalInvoices)} sublabel="All time" />
+          <InvoiceMetric label="Unpaid" value={formatMoney(unpaidTotal)} sublabel="Open balance" />
+          <InvoiceMetric label="Overdue" value={formatMoney(overdueTotal)} sublabel="Past due" />
+          <InvoiceMetric label="Paid" value={formatMoney(paidTotal)} sublabel="Paid invoices" />
+          <InvoiceMetric label="Credits" value={formatMoney(0)} sublabel="Available credit" />
+        </section>
+
+        <Panel title="Invoices">
+          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search by invoice number, type, status"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">All statuses</option>
+              {invoiceStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+            <select
+              className={inputClassName}
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+            >
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="week">This week</option>
+              <option value="month">This month</option>
+            </select>
+          </div>
+
+          <div className="mb-4 flex flex-wrap gap-2">
+            {[
+              ["all", "All Invoices"],
+              ["Unpaid", "Unpaid"],
+              ["Overdue", "Overdue"],
+              ["Paid", "Paid"],
+              ["Cancelled", "Voided / Cancelled"],
+            ].map(([value, label]) => (
+              <QuickFilterButton
+                key={value}
+                active={statusFilter === value}
+                onClick={() => setStatusFilter(value)}
+              >
+                {label}
+              </QuickFilterButton>
+            ))}
+          </div>
+
+          {loading ? (
+            <LoadingState label="Loading invoices..." />
+          ) : filteredInvoices.length === 0 ? (
+            <EmptyState title="No invoices found" body="Invoices will appear here after services are billed." />
+          ) : (
+            <div className="max-h-[42rem] overflow-auto">
+              <table className="w-full min-w-[1080px] text-left text-sm tabular-nums">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Invoice #</th>
+                    <th className="px-4 py-3 font-semibold">Invoice Date</th>
+                    <th className="px-4 py-3 font-semibold">Due Date</th>
+                    <th className="px-4 py-3 font-semibold">Type</th>
+                    <th className="px-4 py-3 font-semibold">Related To</th>
+                    <th className="px-4 py-3 font-semibold">Amount</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Balance</th>
+                    <th className="px-4 py-3 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredInvoices.map((invoice) => (
+                    <tr key={invoice.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium text-blue-700">{invoice.invoice_number}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(invoice.issue_date)}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDate(invoice.due_date)}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatInvoiceType(invoice)}</td>
+                      <td className="px-4 py-3 text-slate-600">{invoice.service_requests?.request_number ?? "-"}</td>
+                      <td className="px-4 py-3 font-medium text-slate-950">{formatMoney(invoice.total_amount)}</td>
+                      <td className="px-4 py-3">
+                        <StatusBadge tone={invoiceStatusTone(invoice.status)}>{invoice.status}</StatusBadge>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-950">{formatMoney(invoice.balance_due)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
+                            View
+                          </Button>
+                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
+                            Download PDF
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
     );
   }
 
@@ -586,6 +720,60 @@ function Summary({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
     </div>
   );
+}
+
+function InvoiceMetric({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: string;
+  sublabel: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
+      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    </div>
+  );
+}
+
+function formatInvoiceType(invoice: Invoice) {
+  const firstType = invoice.invoice_items[0]?.item_type;
+
+  if (!firstType) return "Services";
+
+  return customLabels[firstType] ?? firstType.replaceAll("_", " ");
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function isWithinDateFilter(value: string, filter: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const start = new Date(now);
+
+  if (filter === "today") {
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "week") {
+    start.setDate(now.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "month") {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  } else {
+    return true;
+  }
+
+  return date >= start && date <= now;
 }
 
 function invoiceStatusTone(status: InvoiceStatus) {

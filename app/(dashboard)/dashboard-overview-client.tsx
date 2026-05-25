@@ -59,10 +59,37 @@ const initialOverview: Overview = {
 };
 
 type DateRange = "today" | "week" | "month" | "year";
+type ClientShipment = {
+  id: string;
+  created_at: string;
+  number_of_boxes: number;
+  tracking_numbers: string[];
+  statuses: { name: string } | null;
+  incoming_items: {
+    expected_quantity: number;
+    products: { product_name: string } | null;
+  }[];
+};
+type ClientInventoryRow = {
+  id: string;
+  available_qty: number;
+  reserved_qty: number;
+  processing_qty: number;
+  products: { product_name: string; sku: string | null } | null;
+};
+type ClientActivity = {
+  id: string;
+  action: string;
+  created_at: string;
+  metadata: unknown;
+};
 
 export function DashboardOverviewClient() {
   const { role, clientId } = useAuth();
   const [overview, setOverview] = useState<Overview>(initialOverview);
+  const [clientShipments, setClientShipments] = useState<ClientShipment[]>([]);
+  const [clientInventory, setClientInventory] = useState<ClientInventoryRow[]>([]);
+  const [clientActivity, setClientActivity] = useState<ClientActivity[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>("month");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +173,41 @@ export function DashboardOverviewClient() {
           .filter((invoice) => invoice.status === "Paid")
           .reduce((total, invoice) => total + Number(invoice.paid_amount ?? invoice.total_amount ?? 0), 0),
       });
+
+      if (isClientPortal && clientId) {
+        const [shipmentDetails, inventoryDetails, activityDetails] = await Promise.all([
+          supabase
+            .from("incoming_shipments")
+            .select("id, created_at, number_of_boxes, tracking_numbers, statuses(name), incoming_items(expected_quantity, products(product_name))")
+            .eq("client_id", clientId)
+            .is("deleted_at", null)
+            .order("created_at", { ascending: false })
+            .limit(5),
+          supabase
+            .from("inventory")
+            .select("id, available_qty, reserved_qty, processing_qty, products!inventory_product_id_fkey(product_name, sku)")
+            .eq("client_id", clientId)
+            .is("deleted_at", null)
+            .order("updated_at", { ascending: false })
+            .limit(5),
+          supabase
+            .from("activity_logs")
+            .select("id, action, created_at, metadata")
+            .eq("client_id", clientId)
+            .order("created_at", { ascending: false })
+            .limit(5),
+        ]);
+
+        const detailError = shipmentDetails.error ?? inventoryDetails.error ?? activityDetails.error;
+
+        if (detailError) {
+          console.error("Client dashboard detail fetch failed", detailError);
+        } else {
+          setClientShipments((shipmentDetails.data ?? []) as ClientShipment[]);
+          setClientInventory((inventoryDetails.data ?? []) as ClientInventoryRow[]);
+          setClientActivity((activityDetails.data ?? []) as ClientActivity[]);
+        }
+      }
     } catch (fetchError) {
       console.error("Dashboard KPI fetch failed", fetchError);
       setError(fetchError instanceof Error ? fetchError.message : "Dashboard KPI fetch failed.");
@@ -161,34 +223,47 @@ export function DashboardOverviewClient() {
   }, [loadOverview]);
 
   if (isClientPortal) {
+    const incomingCount =
+      overview.incomingShipments.inTransit +
+      overview.incomingShipments.arrived +
+      overview.incomingShipments.issue;
+    const pendingServices = overview.requests.new + overview.requests.inProcess;
+    const storageBoxes = clientShipments.reduce((sum, shipment) => sum + shipment.number_of_boxes, 0);
+
     return (
       <div className="space-y-5">
         <ErrorBanner message={error} />
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric label="Available Units" value={overview.inventoryAvailable} loading={loading} />
-          <Metric label="My Incoming" value={overview.incomingShipments.inTransit + overview.incomingShipments.arrived + overview.incomingShipments.received + overview.incomingShipments.issue} loading={loading} />
-          <Metric label="My Requests" value={overview.requests.new + overview.requests.inProcess + overview.requests.completed} loading={loading} />
-          <Metric label="My Invoices" value={overview.invoices.open + overview.invoices.paidThisMonth} loading={loading} />
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <PortalMetric label="In Stock" value={overview.inventoryAvailable} sublabel="Units" loading={loading} />
+          <PortalMetric label="Incoming Shipments" value={incomingCount} sublabel="Active" loading={loading} />
+          <PortalMetric label="Pending Services" value={pendingServices} sublabel="Orders" loading={loading} />
+          <PortalMetric label="Unpaid Invoices" value={overview.invoices.open} sublabel="Outstanding" loading={loading} />
+          <PortalMetric label="Storage Usage" value={storageBoxes} sublabel="Boxes" loading={loading} />
         </section>
 
-        <Panel
-          title="Client workspace"
-          description="Jump into the areas available to your account."
-        >
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <PortalLink href="/inventory" title="My Inventory" body="Check available, reserved, processing, shipped, and damaged units." />
-            <PortalLink href="/incoming-shipments" title="My Incoming Shipments" body="Track inbound shipments and receiving progress." />
-            <PortalLink href="/requests" title="My Requests" body="Create prep requests and follow approval or work status." />
-            <PortalLink href="/invoices" title="My Invoices" body="Review invoices, due dates, and payment status." />
-          </div>
-        </Panel>
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(22rem,0.85fr)]">
+          <Panel title="Incoming Shipments">
+            <ClientShipmentsTable shipments={clientShipments} loading={loading} />
+          </Panel>
 
-        <Panel title="Notifications" description="Use the notification button in the top bar for recent updates.">
-          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm leading-6 text-slate-600">
-            Shipment updates, request approvals, discrepancies, and invoice notices appear in the notification menu.
-          </div>
-        </Panel>
+          <Panel title="Recent Activity">
+            <ClientActivityList activity={clientActivity} loading={loading} />
+          </Panel>
+
+          <Panel title="Top Inventory Snapshot">
+            <ClientInventoryTable rows={clientInventory} loading={loading} />
+          </Panel>
+
+          <Panel title="Quick Actions">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <PortalAction href="/incoming-shipments/new" title="Create Incoming Shipment" />
+              <PortalAction href="/requests/new" title="Request Service" />
+              <PortalAction href="/products/new" title="Add Product" />
+              <PortalAction href="/documents/new" title="Upload Files" />
+            </div>
+          </Panel>
+        </section>
       </div>
     );
   }
@@ -286,23 +361,155 @@ function Metric({
   );
 }
 
-function PortalLink({
-  href,
-  title,
-  body,
+function PortalMetric({
+  label,
+  value,
+  sublabel,
+  loading,
 }: {
-  href: string;
-  title: string;
-  body: string;
+  label: string;
+  value: number;
+  sublabel: string;
+  loading: boolean;
 }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {loading ? (
+        <div className="mt-4 h-8 w-20 animate-pulse rounded-md bg-slate-100" />
+      ) : (
+        <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">
+          {value}
+        </p>
+      )}
+      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    </div>
+  );
+}
+
+function PortalAction({ href, title }: { href: string; title: string }) {
   return (
     <Link
       href={href}
-      className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-white focus:outline-none focus:ring-4 focus:ring-slate-100"
+      className="flex min-h-24 items-center rounded-lg border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-950 transition hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-4 focus:ring-blue-100"
     >
-      <p className="text-sm font-semibold text-slate-950">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
+      <span className="mr-3 flex size-10 items-center justify-center rounded-full bg-blue-50 text-lg text-blue-700">
+        +
+      </span>
+      {title}
     </Link>
+  );
+}
+
+function ClientShipmentsTable({
+  shipments,
+  loading,
+}: {
+  shipments: ClientShipment[];
+  loading: boolean;
+}) {
+  if (loading) return <div className="h-28 animate-pulse rounded-md bg-slate-100" />;
+  if (shipments.length === 0) {
+    return <div className="rounded-md border border-dashed border-slate-300 p-5 text-sm text-slate-500">No incoming shipments yet.</div>;
+  }
+
+  return (
+    <div className="overflow-auto">
+      <table className="w-full min-w-[720px] text-left text-sm tabular-nums">
+        <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-3 py-3 font-semibold">Shipment ID</th>
+            <th className="px-3 py-3 font-semibold">Products</th>
+            <th className="px-3 py-3 font-semibold">Boxes</th>
+            <th className="px-3 py-3 font-semibold">Units</th>
+            <th className="px-3 py-3 font-semibold">Created Date</th>
+            <th className="px-3 py-3 font-semibold">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {shipments.map((shipment) => (
+            <tr key={shipment.id} className="hover:bg-slate-50">
+              <td className="px-3 py-3 font-medium text-blue-700">{shipment.id.slice(0, 8)}</td>
+              <td className="px-3 py-3 text-slate-600">{shipment.incoming_items.length}</td>
+              <td className="px-3 py-3 text-slate-600">{shipment.number_of_boxes}</td>
+              <td className="px-3 py-3 text-slate-600">
+                {shipment.incoming_items.reduce((sum, item) => sum + item.expected_quantity, 0)}
+              </td>
+              <td className="px-3 py-3 text-slate-600">{formatShortDate(shipment.created_at)}</td>
+              <td className="px-3 py-3">
+                <StatusBadge tone={shipmentStatusTone(shipment.statuses?.name ?? "In Transit")}>
+                  {shipment.statuses?.name ?? "In Transit"}
+                </StatusBadge>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ClientActivityList({
+  activity,
+  loading,
+}: {
+  activity: ClientActivity[];
+  loading: boolean;
+}) {
+  if (loading) return <div className="h-28 animate-pulse rounded-md bg-slate-100" />;
+  if (activity.length === 0) {
+    return <div className="rounded-md border border-dashed border-slate-300 p-5 text-sm text-slate-500">No recent activity yet.</div>;
+  }
+
+  return (
+    <div className="divide-y divide-slate-100">
+      {activity.map((item) => (
+        <div key={item.id} className="flex items-center justify-between gap-4 py-3 text-sm">
+          <span className="font-medium text-slate-700">{sentenceCase(item.action)}</span>
+          <span className="shrink-0 text-xs text-slate-500">{formatShortDate(item.created_at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClientInventoryTable({
+  rows,
+  loading,
+}: {
+  rows: ClientInventoryRow[];
+  loading: boolean;
+}) {
+  if (loading) return <div className="h-28 animate-pulse rounded-md bg-slate-100" />;
+  if (rows.length === 0) {
+    return <div className="rounded-md border border-dashed border-slate-300 p-5 text-sm text-slate-500">Received inventory will appear here.</div>;
+  }
+
+  return (
+    <div className="overflow-auto">
+      <table className="w-full min-w-[640px] text-left text-sm tabular-nums">
+        <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th className="px-3 py-3 font-semibold">Product</th>
+            <th className="px-3 py-3 font-semibold">SKU</th>
+            <th className="px-3 py-3 font-semibold">In Stock</th>
+            <th className="px-3 py-3 font-semibold">Reserved</th>
+            <th className="px-3 py-3 font-semibold">Available</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <tr key={row.id} className="hover:bg-slate-50">
+              <td className="px-3 py-3 font-medium text-slate-950">{row.products?.product_name ?? "Unknown product"}</td>
+              <td className="px-3 py-3 text-slate-600">{row.products?.sku ?? "-"}</td>
+              <td className="px-3 py-3 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
+              <td className="px-3 py-3 text-slate-600">{row.reserved_qty}</td>
+              <td className="px-3 py-3 font-semibold text-emerald-700">{row.available_qty}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -334,6 +541,25 @@ function CompactBlock({
       </div>
     </div>
   );
+}
+
+function shipmentStatusTone(status: string) {
+  if (status === "Received") return "emerald";
+  if (status === "Issue" || status === "Received with Discrepancy") return "rose";
+  if (status === "Arrived at Prep" || status === "Pending Receiving") return "orange";
+  return "blue";
+}
+
+function sentenceCase(value: string) {
+  return value.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
 function countClients(

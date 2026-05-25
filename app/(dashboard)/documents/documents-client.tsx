@@ -39,7 +39,7 @@ type DocumentFile = Tables<"attachments"> & {
 };
 
 export function DocumentsClient() {
-  const { role, user } = useAuth();
+  const { role, user, clientId } = useAuth();
   const isAdmin = role === "admin";
   const [clients, setClients] = useState<Client[]>([]);
   const [documents, setDocuments] = useState<DocumentFile[]>([]);
@@ -49,6 +49,10 @@ export function DocumentsClient() {
   const [filterCategory, setFilterCategory] = useState<DocumentCategory | "all">("all");
   const [filterUploadedBy, setFilterUploadedBy] = useState("all");
   const [filterVisibility, setFilterVisibility] = useState<VisibilityFilter>("all");
+  const [fileQuery, setFileQuery] = useState("");
+  const [fileTypeFilter, setFileTypeFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [folderFilter, setFolderFilter] = useState("All Files");
   const [previewDocument, setPreviewDocument] = useState<DocumentFile | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -151,6 +155,28 @@ export function DocumentsClient() {
       }),
     [documents, filterCategory, filterClientId, filterScope, filterUploadedBy, filterVisibility, isAdmin, scopeTab],
   );
+  const clientDocuments = useMemo(() => {
+    const normalized = fileQuery.trim().toLowerCase();
+
+    return filteredDocuments.filter((document) => {
+      const allowed =
+        (document.file_scope === "global" && document.visible_to_client) ||
+        (document.file_scope === "client_specific" &&
+          document.client_id === clientId &&
+          (document.visible_to_client || document.uploaded_by_user_id === user?.id));
+      const matchesQuery =
+        !normalized ||
+        document.file_name.toLowerCase().includes(normalized) ||
+        document.category.toLowerCase().includes(normalized) ||
+        (document.mime_type ?? "").toLowerCase().includes(normalized);
+      const extension = getFileType(document);
+      const matchesType = fileTypeFilter === "all" || extension === fileTypeFilter;
+      const matchesDate = dateFilter === "all" || isWithinDateFilter(document.created_at, dateFilter);
+      const matchesFolder = folderFilter === "All Files" || documentFolder(document) === folderFilter;
+
+      return allowed && matchesQuery && matchesType && matchesDate && matchesFolder;
+    });
+  }, [clientId, dateFilter, fileQuery, fileTypeFilter, filteredDocuments, folderFilter, user?.id]);
 
   async function archiveDocument(document: DocumentFile) {
     if (!window.confirm(`Archive ${document.file_name}?`)) {
@@ -237,6 +263,156 @@ export function DocumentsClient() {
   const canPreviewSelected =
     Boolean(selectedPreviewUrl) &&
     (selectedPreviewMime.includes("pdf") || selectedPreviewMime.startsWith("image/"));
+
+  if (!isAdmin) {
+    const folderNames = [
+      "All Files",
+      "Incoming Shipments",
+      "Order Service",
+      "Invoices",
+      "Product Documents",
+      "Labels & Packing Slips",
+      "Statements",
+      "Other",
+      "Archive",
+    ];
+    const fileTypes = Array.from(new Set(documents.map(getFileType))).filter(Boolean).sort();
+    const recentlyAdded = documents.filter((document) => isWithinDateFilter(document.created_at, "week")).length;
+
+    return (
+      <div className="space-y-5">
+        <ErrorBanner message={error} />
+        {message ? (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+            {message}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Files & Documents</h2>
+          <Link
+            href="/documents/new"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            <span className="mr-2 text-base leading-none">+</span>
+            Upload Files
+          </Link>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <FileMetric label="Total Files" value={clientDocuments.length} sublabel="Allowed files" />
+          <FileMetric label="Folders / Categories" value={folderNames.length - 1} sublabel="Folders" />
+          <FileMetric label="Storage Used" value={0} sublabel="Tracked in storage" />
+          <FileMetric label="Recently Added" value={recentlyAdded} sublabel="Files this week" />
+        </section>
+
+        <div className="grid gap-5 xl:grid-cols-[16rem_minmax(0,1fr)]">
+          <Panel title="Folders">
+            <div className="space-y-1">
+              {folderNames.map((folder) => (
+                <button
+                  key={folder}
+                  type="button"
+                  className={[
+                    "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm font-semibold transition",
+                    folderFilter === folder ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-50",
+                  ].join(" ")}
+                  onClick={() => setFolderFilter(folder)}
+                >
+                  <span>{folder}</span>
+                  <span className="text-xs text-slate-400">
+                    {folder === "All Files" ? clientDocuments.length : documents.filter((document) => documentFolder(document) === folder).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Files">
+            <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+              <input
+                className={inputClassName}
+                placeholder="Search files by name, type, or folder"
+                value={fileQuery}
+                onChange={(event) => setFileQuery(event.target.value)}
+              />
+              <select
+                className={inputClassName}
+                value={fileTypeFilter}
+                onChange={(event) => setFileTypeFilter(event.target.value)}
+              >
+                <option value="all">All types</option>
+                {fileTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+              <select
+                className={inputClassName}
+                value={dateFilter}
+                onChange={(event) => setDateFilter(event.target.value)}
+              >
+                <option value="all">All time</option>
+                <option value="today">Today</option>
+                <option value="week">This week</option>
+                <option value="month">This month</option>
+              </select>
+            </div>
+
+            {loading ? (
+              <LoadingState label="Loading documents..." />
+            ) : clientDocuments.length === 0 ? (
+              <EmptyState title="No files found" body="Files shared with your account will appear here." />
+            ) : (
+              <div className="max-h-[42rem] overflow-auto">
+                <table className={`${tableClassName} min-w-[980px]`}>
+                  <thead className={tableHeadClassName}>
+                    <tr>
+                      <th className={`${tableCellClassName} font-semibold`}>File Name</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Folder / Category</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Type</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Size</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Uploaded By</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Upload Date</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {clientDocuments.map((document) => (
+                      <tr key={document.id} className="hover:bg-slate-50">
+                        <td className={`${tableCellClassName} font-medium text-slate-950`}>{document.file_name}</td>
+                        <td className={`${tableCellClassName} text-slate-600`}>{documentFolder(document)}</td>
+                        <td className={`${tableCellClassName} text-slate-600`}>{getFileType(document).toUpperCase()}</td>
+                        <td className={`${tableCellClassName} text-slate-600`}>-</td>
+                        <td className={`${tableCellClassName} text-slate-600`}>{formatRole(document.uploaded_by_role)}</td>
+                        <td className={`${tableCellClassName} text-slate-600`}>{formatDate(document.created_at)}</td>
+                        <td className={tableCellClassName}>
+                          <div className="flex flex-wrap gap-2">
+                            <a
+                              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                              href={document.preview_url ?? document.file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open
+                            </a>
+                            <Button type="button" variant="secondary" onClick={() => openPrintView(document)}>
+                              Preview
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -513,6 +689,64 @@ function formatRole(value: string) {
 
 function formatScope(value: FileScope) {
   return value === "global" ? "Global" : "Client file";
+}
+
+function FileMetric({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: number;
+  sublabel: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
+      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    </div>
+  );
+}
+
+function getFileType(document: DocumentFile) {
+  const extension = document.file_name.split(".").pop()?.toLowerCase();
+
+  if (extension) return extension;
+  if (document.mime_type?.includes("pdf")) return "pdf";
+  if (document.mime_type?.startsWith("image/")) return document.mime_type.replace("image/", "");
+
+  return "file";
+}
+
+function documentFolder(document: DocumentFile) {
+  if (document.shipment_id) return "Incoming Shipments";
+  if (document.service_request_id) return "Order Service";
+  if (document.invoice_id) return "Invoices";
+  if (document.product_id || document.category === "Product Images") return "Product Documents";
+  if (document.category === "Supplier Invoice") return "Statements";
+  if (document.category === "Agreement" || document.category === "Compliance") return "Other";
+  return document.category === "Other" ? "Other" : "Labels & Packing Slips";
+}
+
+function isWithinDateFilter(value: string, filter: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const start = new Date(now);
+
+  if (filter === "today") {
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "week") {
+    start.setDate(now.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "month") {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  } else {
+    return true;
+  }
+
+  return date >= start && date <= now;
 }
 
 function formatRelated(document: DocumentFile) {
