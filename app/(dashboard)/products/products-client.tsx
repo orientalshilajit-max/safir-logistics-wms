@@ -315,15 +315,13 @@ function getClientProductSummary(
   const productIncoming = incomingLines.filter((line) => line.product_id === product.id);
   const availableQty = productInventory.reduce((sum, row) => sum + row.available_qty, 0);
   const expectedQty = productIncoming.reduce((sum, line) => sum + line.expected_quantity, 0);
-  const boxes = new Set(
-    productIncoming
-      .map((line) => line.tracking_box_id)
-      .filter(Boolean),
-  ).size;
+  const boxes = productIncoming.reduce((sum, line) => {
+    return sum + (line.incoming_shipments?.number_of_boxes ?? 0);
+  }, 0);
   const status = getClientProductStatus(availableQty, productIncoming);
 
   return {
-    boxes: boxes || productIncoming.reduce((sum, line) => sum + (line.incoming_shipments?.number_of_boxes ?? 0), 0),
+    boxes,
     items: availableQty || expectedQty,
     status,
   };

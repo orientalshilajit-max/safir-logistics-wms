@@ -34,17 +34,26 @@ type Shipment = Tables<"incoming_shipments"> & {
 };
 
 const boxStatuses: BoxStatus[] = ["In Transit", "Delivered", "Received", "Issue"];
+type ItemDraft = {
+  damaged: string;
+  missing: string;
+  notes: string;
+  received: string;
+};
 
 export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   const { role } = useAuth();
   const isAdmin = role === "admin" || role === "warehouse_operator";
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, { received: string; notes: string }>>({});
+  const [statuses, setStatuses] = useState<Status[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
+  const [boxDraft, setBoxDraft] = useState({ actual_received_boxes: "", notes: "" });
   const [newLines, setNewLines] = useState<Record<string, { product_id: string; received: string; notes: string }>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const loadShipment = useCallback(async () => {
     setLoading(true);
@@ -72,13 +81,23 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
           box.incoming_items.map((item) => [
             item.id,
             {
-              received: String(item.received_quantity),
+              damaged: String(item.damaged_quantity),
+              missing: String(item.missing_quantity),
               notes: item.notes ?? "",
+              received: item.received_quantity === 0 && !item.inventory_posted_at
+                ? ""
+                : String(item.received_quantity),
             },
           ]),
         ),
       ),
     );
+    setBoxDraft({
+      actual_received_boxes: loadedShipment.actual_received_boxes === null
+        ? ""
+        : String(loadedShipment.actual_received_boxes),
+      notes: loadedShipment.notes ?? "",
+    });
     setNewLines(
       Object.fromEntries(
         loadedShipment.incoming_tracking_boxes.map((box) => [
@@ -102,6 +121,20 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       setProducts(productData ?? []);
     }
 
+    const { data: statusData, error: statusError } = await supabase
+      .from("statuses")
+      .select("id, name, color")
+      .eq("category", "incoming_shipment")
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order("sort_order");
+
+    if (statusError) {
+      setError(statusError.message);
+    } else {
+      setStatuses(statusData ?? []);
+    }
+
     setLoading(false);
   }, [shipmentId]);
 
@@ -117,6 +150,8 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       expected: items.reduce((sum, item) => sum + item.expected_quantity, 0),
       received: items.reduce((sum, item) => sum + item.received_quantity, 0),
       issues: items.filter((item) => getDifference(item) !== 0 || item.is_unexpected).length,
+      expectedBoxes: shipment?.number_of_boxes ?? 0,
+      actualBoxes: shipment?.actual_received_boxes ?? null,
     };
   }, [shipment]);
 
@@ -140,14 +175,94 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     setSavingId(null);
   }
 
+  async function markShipmentStatus(statusName: "Arrived at Prep" | "Received" | "Issue") {
+    if (!shipment || !isAdmin || savingId) return;
+
+    const status = statuses.find((item) => item.name === statusName);
+
+    if (!status) {
+      setError(`${statusName} status is not configured.`);
+      return;
+    }
+
+    setSavingId(`shipment-${statusName}`);
+    setError(null);
+    setMessage(null);
+
+    const { error: updateError } = await supabase
+      .from("incoming_shipments")
+      .update({ status_id: status.id })
+      .eq("id", shipment.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setMessage(`Shipment marked ${statusName}.`);
+      await loadShipment();
+    }
+
+    setSavingId(null);
+  }
+
+  async function saveShipmentReceivingDetails() {
+    if (!shipment || !isAdmin || savingId) return;
+
+    const actualBoxes =
+      boxDraft.actual_received_boxes.trim() === ""
+        ? null
+        : Number(boxDraft.actual_received_boxes);
+
+    if (actualBoxes !== null && (!Number.isInteger(actualBoxes) || actualBoxes < 0)) {
+      setError("Actual received boxes must be a whole number zero or greater.");
+      return;
+    }
+
+    setSavingId("shipment-boxes");
+    setError(null);
+    setMessage(null);
+
+    const { error: updateError } = await supabase
+      .from("incoming_shipments")
+      .update({
+        actual_received_boxes: actualBoxes,
+        notes: boxDraft.notes.trim() || null,
+      })
+      .eq("id", shipment.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setMessage("Receiving details saved.");
+      await loadShipment();
+      await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
+    }
+
+    setSavingId(null);
+  }
+
   async function saveItem(item: ShipmentItem) {
     if (!isAdmin || savingId || item.inventory_posted_at) return;
 
     const draft = drafts[item.id];
-    const received = Number(draft?.received ?? item.received_quantity);
+    const received =
+      draft?.received.trim() === ""
+        ? item.expected_quantity
+        : Number(draft?.received ?? item.received_quantity);
+    const damaged = Number(draft?.damaged ?? item.damaged_quantity);
+    const missing =
+      draft?.missing.trim() === ""
+        ? Math.max(item.expected_quantity - received, 0)
+        : Number(draft?.missing ?? item.missing_quantity);
 
-    if (!Number.isInteger(received) || received < 0) {
-      setError("Actual quantity must be a whole number zero or greater.");
+    if (
+      !Number.isInteger(received) ||
+      received < 0 ||
+      !Number.isInteger(damaged) ||
+      damaged < 0 ||
+      !Number.isInteger(missing) ||
+      missing < 0
+    ) {
+      setError("Actual, damaged, and missing quantities must be whole numbers zero or greater.");
       return;
     }
 
@@ -157,8 +272,9 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     const { error: updateError } = await supabase
       .from("incoming_items")
       .update({
+        damaged_quantity: damaged,
+        missing_quantity: missing,
         received_quantity: received,
-        missing_quantity: Math.max(item.expected_quantity - received, 0),
         notes: draft?.notes.trim() || null,
       })
       .eq("id", item.id);
@@ -166,8 +282,8 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     if (updateError) {
       setError(updateError.message);
     } else {
-      await loadShipment();
       await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipmentId });
+      await loadShipment();
     }
 
     setSavingId(null);
@@ -234,16 +350,89 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   async function postBoxToInventory(box: TrackingBox) {
     if (!isAdmin || savingId || box.inventory_posted_at) return;
 
-    const hasDiscrepancy = box.incoming_items.some(
-      (item) => getDifference(item) !== 0 || item.is_unexpected,
-    );
+    const normalizedItems = box.incoming_items.map((item) => {
+      const draft = drafts[item.id];
+      const received =
+        draft?.received.trim() === ""
+          ? item.expected_quantity
+          : Number(draft?.received ?? item.received_quantity);
+      const damaged = Number(draft?.damaged ?? item.damaged_quantity);
+      const missing =
+        draft?.missing.trim() === ""
+          ? Math.max(item.expected_quantity - received, 0)
+          : Number(draft?.missing ?? item.missing_quantity);
 
-    if (hasDiscrepancy && !window.confirm("This tracking/box has a discrepancy. Post actual quantities to inventory?")) {
+      return { damaged, item, missing, received };
+    });
+
+    if (
+      normalizedItems.some(
+        ({ damaged, missing, received }) =>
+          !Number.isInteger(received) ||
+          received < 0 ||
+          !Number.isInteger(damaged) ||
+          damaged < 0 ||
+          !Number.isInteger(missing) ||
+          missing < 0,
+      )
+    ) {
+      setError("Actual, damaged, and missing quantities must be whole numbers zero or greater.");
+      return;
+    }
+
+    const actualBoxes =
+      boxDraft.actual_received_boxes.trim() === ""
+        ? shipment?.number_of_boxes ?? 0
+        : Number(boxDraft.actual_received_boxes);
+    const hasBoxDiscrepancy = shipment ? actualBoxes !== shipment.number_of_boxes : false;
+    const hasDiscrepancy = normalizedItems.some(
+      ({ damaged, item, missing, received }) =>
+        item.is_unexpected ||
+        received !== item.expected_quantity ||
+        damaged > 0 ||
+        missing > 0,
+    ) || hasBoxDiscrepancy;
+
+    if (hasDiscrepancy && !window.confirm("This shipment has a discrepancy. Post actual quantities to inventory?")) {
       return;
     }
 
     setSavingId(`post-${box.id}`);
     setError(null);
+    setMessage(null);
+
+    for (const { damaged, item, missing, received } of normalizedItems) {
+      const { error: itemError } = await supabase
+        .from("incoming_items")
+        .update({
+          damaged_quantity: damaged,
+          missing_quantity: missing,
+          received_quantity: received,
+          notes: drafts[item.id]?.notes.trim() || item.notes,
+        })
+        .eq("id", item.id)
+        .is("inventory_posted_at", null);
+
+      if (itemError) {
+        setError(itemError.message);
+        setSavingId(null);
+        return;
+      }
+    }
+
+    const { error: shipmentUpdateError } = await supabase
+      .from("incoming_shipments")
+      .update({
+        actual_received_boxes: actualBoxes,
+        notes: boxDraft.notes.trim() || shipment?.notes || null,
+      })
+      .eq("id", shipmentId);
+
+    if (shipmentUpdateError) {
+      setError(shipmentUpdateError.message);
+      setSavingId(null);
+      return;
+    }
 
     const { error: postError } = await supabase.rpc("post_incoming_tracking_box_to_inventory", {
       p_tracking_box_id: box.id,
@@ -252,6 +441,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     if (postError) {
       setError(postError.message);
     } else {
+      setMessage("Inventory updated successfully.");
       await loadShipment();
     }
 
@@ -274,13 +464,59 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         </Link>
       </div>
       <ErrorBanner message={error} />
+      {message ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+          {message}
+        </div>
+      ) : null}
 
-      <div className="grid gap-4 md:grid-cols-4">
+      {isAdmin ? (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markShipmentStatus("Arrived at Prep")}>
+            Mark Arrived at Prep
+          </Button>
+          <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markShipmentStatus("Issue")}>
+            Mark Issue
+          </Button>
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-5">
         <Summary label="Expected" value={totals.expected} />
         <Summary label="Received" value={totals.received} />
+        <Summary label="Expected Boxes" value={totals.expectedBoxes} />
+        <Summary label="Actual Boxes" value={totals.actualBoxes ?? "-"} />
         <Summary label="Issues" value={totals.issues} />
         <Summary label="Status" value={shipment.statuses?.name ?? "Unknown"} />
       </div>
+
+      <Panel title="Receiving details">
+        <div className="grid gap-3 md:grid-cols-[12rem_minmax(0,1fr)_auto]">
+          <Field label="Actual received boxes">
+            <input
+              className={inputClassName}
+              disabled={!isAdmin}
+              min="0"
+              type="number"
+              value={boxDraft.actual_received_boxes}
+              onChange={(event) => setBoxDraft({ ...boxDraft, actual_received_boxes: event.target.value })}
+            />
+          </Field>
+          <Field label="Notes">
+            <input
+              className={inputClassName}
+              disabled={!isAdmin}
+              value={boxDraft.notes}
+              onChange={(event) => setBoxDraft({ ...boxDraft, notes: event.target.value })}
+            />
+          </Field>
+          <div className="flex items-end">
+            <Button type="button" disabled={!isAdmin || savingId === "shipment-boxes"} onClick={() => void saveShipmentReceivingDetails()}>
+              {savingId === "shipment-boxes" ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </div>
+      </Panel>
 
       <Panel title="Tracking / box table">
         <div className="max-h-[32rem] overflow-auto">
@@ -326,7 +562,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                     </td>
                     <td className="px-4 py-3">
                       <Button type="button" disabled={!isAdmin || Boolean(box.inventory_posted_at) || savingId === `post-${box.id}`} onClick={() => void postBoxToInventory(box)}>
-                        {box.inventory_posted_at ? "Posted" : savingId === `post-${box.id}` ? "Posting..." : "Post to inventory"}
+                        {box.inventory_posted_at ? "Already posted to inventory" : savingId === `post-${box.id}` ? "Posting..." : "Post to Inventory"}
                       </Button>
                     </td>
                   </tr>
@@ -346,6 +582,8 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                   <th className="px-4 py-3 font-semibold">Product</th>
                   <th className="px-4 py-3 font-semibold">Expected Qty</th>
                   <th className="px-4 py-3 font-semibold">Actual Qty</th>
+                  <th className="px-4 py-3 font-semibold">Damaged</th>
+                  <th className="px-4 py-3 font-semibold">Missing</th>
                   <th className="px-4 py-3 font-semibold">Difference</th>
                   <th className="px-4 py-3 font-semibold">Notes</th>
                   <th className="px-4 py-3 font-semibold">Action</th>
@@ -354,7 +592,9 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
               <tbody className="divide-y divide-slate-100">
                 {box.incoming_items.map((item) => {
                   const draft = drafts[item.id];
-                  const actual = Number(draft?.received ?? item.received_quantity);
+                  const actual = draft?.received.trim() === ""
+                    ? item.expected_quantity
+                    : Number(draft?.received ?? item.received_quantity);
                   const difference = actual - item.expected_quantity;
 
                   return (
@@ -366,9 +606,23 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                       <td className="px-4 py-3 text-slate-600">{item.expected_quantity}</td>
                       <td className="px-4 py-3">
                         {isAdmin ? (
-                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" value={draft?.received ?? "0"} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], received: event.target.value } }))} />
+                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" placeholder={String(item.expected_quantity)} value={draft?.received ?? ""} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], received: event.target.value } }))} />
                         ) : (
                           <span className="text-slate-600">{item.received_quantity}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {isAdmin ? (
+                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" value={draft?.damaged ?? "0"} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], damaged: event.target.value } }))} />
+                        ) : (
+                          <span className="text-slate-600">{item.damaged_quantity}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {isAdmin ? (
+                          <input className={inputClassName} disabled={Boolean(item.inventory_posted_at)} min="0" type="number" value={draft?.missing ?? "0"} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: { ...current[item.id], missing: event.target.value } }))} />
+                        ) : (
+                          <span className="text-slate-600">{item.missing_quantity}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">

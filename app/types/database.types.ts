@@ -421,6 +421,7 @@ export type Database = {
           created_at: string;
           deleted_at: string | null;
           expected_arrival_date: string | null;
+          actual_received_boxes: number | null;
           id: string;
           notes: string | null;
           number_of_boxes: number;
@@ -434,6 +435,7 @@ export type Database = {
           created_at?: string;
           deleted_at?: string | null;
           expected_arrival_date?: string | null;
+          actual_received_boxes?: number | null;
           id?: string;
           notes?: string | null;
           number_of_boxes?: number;
@@ -447,6 +449,7 @@ export type Database = {
           created_at?: string;
           deleted_at?: string | null;
           expected_arrival_date?: string | null;
+          actual_received_boxes?: number | null;
           id?: string;
           notes?: string | null;
           number_of_boxes?: number;

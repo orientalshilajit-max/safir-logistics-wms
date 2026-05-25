@@ -238,33 +238,28 @@ export function ProductFormClient({ productId }: { productId?: string }) {
         return;
       }
 
-      let trackingBoxId: string | null = null;
+      const trackingNumber = trackingNumbers[0] ?? `Manual-${shipmentResult.data.id.slice(0, 8)}`;
+      const { data: trackingBox, error: trackingBoxError } = await supabase
+        .from("incoming_tracking_boxes")
+        .insert({
+          shipment_id: shipmentResult.data.id,
+          tracking_number: trackingNumber,
+          carrier,
+          status: "In Transit",
+        })
+        .select("id")
+        .single();
 
-      if (trackingNumbers[0]) {
-        const { data: trackingBox, error: trackingBoxError } = await supabase
-          .from("incoming_tracking_boxes")
-          .insert({
-            shipment_id: shipmentResult.data.id,
-            tracking_number: trackingNumbers[0],
-            carrier,
-            status: "In Transit",
-          })
-          .select("id")
-          .single();
-
-        if (trackingBoxError) {
-          setError(trackingBoxError.message);
-          setSaving(false);
-          return;
-        }
-
-        trackingBoxId = trackingBox.id;
+      if (trackingBoxError) {
+        setError(trackingBoxError.message);
+        setSaving(false);
+        return;
       }
 
       const { error: itemError } = await supabase.from("incoming_items").insert({
         shipment_id: shipmentResult.data.id,
         product_id: productIdValue,
-        tracking_box_id: trackingBoxId,
+        tracking_box_id: trackingBox.id,
         expected_quantity: quantityItems,
         notes: form.notes.trim() || null,
       });

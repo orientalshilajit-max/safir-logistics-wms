@@ -247,7 +247,14 @@ export function getShipmentSummary(shipment: Shipment) {
         item.missing_quantity > 0,
     ).length;
 
-  return { deliveredBoxes, expectedUnits, issueCount, receivedUnits, totalBoxes };
+  return {
+    deliveredBoxes,
+    expectedUnits,
+    issueCount,
+    receivedUnits,
+    totalBoxes: shipment.number_of_boxes || totalBoxes,
+    trackingRows: totalBoxes,
+  };
 }
 
 export function getDisplayStatus(shipment: Shipment) {
