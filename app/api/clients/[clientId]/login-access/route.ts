@@ -104,14 +104,17 @@ export async function POST(
     );
   }
 
-  if (
-    existingUser?.email_confirmed_at &&
-    typedClient.login_status === "active" &&
-    body.action !== "resend"
-  ) {
+  if (typedClient.login_status === "active") {
+    if (existingUser && typedClient.auth_user_id !== existingUser.id) {
+      await adminClient
+        .from("clients")
+        .update({ auth_user_id: existingUser.id, login_status: "active" })
+        .eq("id", typedClient.id);
+    }
+
     return NextResponse.json({
       message: "User already active",
-      auth_user_id: existingUser.id,
+      auth_user_id: existingUser?.id ?? typedClient.auth_user_id,
       login_status: "active",
     });
   }

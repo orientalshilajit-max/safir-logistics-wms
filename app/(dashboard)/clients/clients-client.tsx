@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
@@ -14,6 +15,7 @@ import {
   Panel,
   StatusBadge,
 } from "@/app/components/wms-ui";
+import { KeyIcon, MailIcon, PencilIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
 
 type Client = Tables<"clients">;
 
@@ -161,7 +163,7 @@ export function ClientsClient() {
     };
 
     if (!response.ok) {
-      setError(body.error ?? "Unable to create login access.");
+      setError(body.error ?? "Unable to send registration invite.");
       setOnboardingInstructions(body.instructions ?? manualOnboardingInstructions(client));
     } else {
       setOnboardingMessage(
@@ -171,6 +173,44 @@ export function ClientsClient() {
           (action === "resend"
             ? "Invite resent"
             : "Invite sent"),
+      );
+      await loadClients();
+    }
+
+    setCreatingAccessId(null);
+  }
+
+  async function sendPasswordReset(client: Client) {
+    if (creatingAccessId) {
+      return;
+    }
+
+    setCreatingAccessId(client.id);
+    setError(null);
+    setOnboardingMessage(null);
+    setOnboardingInstructions([]);
+
+    const response = await fetch(`/api/clients/${client.id}/password-reset`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session?.access_token ?? ""}`,
+        "Content-Type": "application/json",
+      },
+    });
+    const body = (await response.json()) as {
+      message?: string;
+      detail?: string;
+      error?: string;
+      rate_limited?: boolean;
+    };
+
+    if (!response.ok) {
+      setError(body.error ?? "Unable to send password reset email.");
+    } else {
+      setOnboardingMessage(
+        body.rate_limited
+          ? "Email rate limit reached"
+          : body.message ?? "Password reset email sent.",
       );
       await loadClients();
     }
@@ -253,38 +293,50 @@ export function ClientsClient() {
                         </StatusBadge>
                       </td>
                       <td className="px-3 py-2.5">
-                        <div className="flex flex-wrap gap-1.5">
-                          <Link
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <TableActionLink
                             href={`/clients/${client.id}/edit`}
                             aria-label={`Edit ${client.company_name}`}
-                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                            title="Edit Client"
                           >
-                            E
-                          </Link>
+                            <PencilIcon />
+                          </TableActionLink>
                           {client.login_status === "no login" ? (
                             <InviteButton
                               clientId={client.id}
                               cooldowns={inviteCooldowns}
-                              label="Create Login Access"
-                              loadingLabel="Creating..."
+                              icon={<MailIcon />}
+                              label="Send Registration Invite"
+                              loadingLabel="Sending..."
                               loading={creatingAccessId === client.id}
                               now={now}
                               onClick={() => void createLoginAccess(client)}
                             />
-                          ) : (
+                          ) : client.login_status === "invited" ? (
                             <InviteButton
                               clientId={client.id}
                               cooldowns={inviteCooldowns}
+                              icon={<MailIcon />}
                               label="Resend Invite"
                               loadingLabel="Sending..."
                               loading={creatingAccessId === client.id}
                               now={now}
                               onClick={() => void createLoginAccess(client, "resend")}
                             />
+                          ) : (
+                            <PasswordResetButton
+                              loading={creatingAccessId === client.id}
+                              onClick={() => void sendPasswordReset(client)}
+                            />
                           )}
-                          <Button type="button" variant="danger" className="size-8 px-0" onClick={() => void deleteClient(client)}>
-                            D
-                          </Button>
+                          <TableActionButton
+                            aria-label={`Delete ${client.company_name}`}
+                            title="Delete Client"
+                            tone="danger"
+                            onClick={() => void deleteClient(client)}
+                          >
+                            <TrashIcon />
+                          </TableActionButton>
                         </div>
                       </td>
                     </tr>
@@ -332,6 +384,7 @@ function AdminMetric({ label, value }: { label: string; value: number }) {
 function InviteButton({
   clientId,
   cooldowns,
+  icon,
   label,
   loadingLabel,
   loading,
@@ -340,6 +393,7 @@ function InviteButton({
 }: {
   clientId: string;
   cooldowns: Record<string, number>;
+  icon: ReactNode;
   label: string;
   loadingLabel: string;
   loading: boolean;
@@ -352,14 +406,37 @@ function InviteButton({
     <Button
       type="button"
       variant="secondary"
+      className="gap-1.5 whitespace-nowrap px-2.5"
       disabled={loading || cooldownSeconds > 0}
       onClick={onClick}
     >
+      {loading || cooldownSeconds > 0 ? null : icon}
       {loading
         ? loadingLabel
         : cooldownSeconds > 0
           ? `${cooldownSeconds}s`
           : label}
+    </Button>
+  );
+}
+
+function PasswordResetButton({
+  loading,
+  onClick,
+}: {
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      className="gap-1.5 whitespace-nowrap px-2.5"
+      disabled={loading}
+      onClick={onClick}
+    >
+      {loading ? null : <KeyIcon />}
+      {loading ? "Sending..." : "Reset Password"}
     </Button>
   );
 }

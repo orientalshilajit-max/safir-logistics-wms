@@ -7,6 +7,7 @@ import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import { ClientDocumentsSection } from "./client-documents-section";
+import { KeyIcon, MailIcon } from "@/app/components/table-actions";
 import {
   Button,
   ErrorBanner,
@@ -304,31 +305,45 @@ export function ClientFormClient({ clientId }: { clientId?: string }) {
         <Panel title="Client portal access">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-600">
-              Send an invite and link this client to a Supabase Auth user.
+              Send a registration invite or help an active client reset their password.
             </p>
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={creatingAccess || cooldownSeconds > 0}
-                onClick={() => void createLoginAccess(client.login_status === "no login" ? "create" : "resend")}
-              >
-                {creatingAccess
-                  ? "Sending..."
-                  : cooldownSeconds > 0
-                    ? `${cooldownSeconds}s`
-                    : client.login_status === "no login"
-                      ? "Create Login Access"
-                      : "Resend Invite"}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={resettingPassword || client.login_status === "no login"}
-                onClick={() => void sendPasswordReset()}
-              >
-                {resettingPassword ? "Sending..." : "Reset Client Password"}
-              </Button>
+              {client.login_status === "no login" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-1.5"
+                  disabled={creatingAccess || cooldownSeconds > 0}
+                  onClick={() => void createLoginAccess("create")}
+                >
+                  {creatingAccess || cooldownSeconds > 0 ? null : <MailIcon />}
+                  {creatingAccess ? "Sending..." : cooldownSeconds > 0 ? `${cooldownSeconds}s` : "Send Registration Invite"}
+                </Button>
+              ) : null}
+              {client.login_status === "invited" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-1.5"
+                  disabled={creatingAccess || cooldownSeconds > 0}
+                  onClick={() => void createLoginAccess("resend")}
+                >
+                  {creatingAccess || cooldownSeconds > 0 ? null : <MailIcon />}
+                  {creatingAccess ? "Sending..." : cooldownSeconds > 0 ? `${cooldownSeconds}s` : "Resend Invite"}
+                </Button>
+              ) : null}
+              {client.login_status === "active" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-1.5"
+                  disabled={resettingPassword}
+                  onClick={() => void sendPasswordReset()}
+                >
+                  {resettingPassword ? null : <KeyIcon />}
+                  {resettingPassword ? "Sending..." : "Reset Password"}
+                </Button>
+              ) : null}
             </div>
           </div>
           {instructions.length > 0 ? (

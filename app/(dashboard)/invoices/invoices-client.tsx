@@ -16,6 +16,7 @@ import {
   StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
+import { DownloadIcon, PencilIcon, TableActionButton, ViewIcon } from "@/app/components/table-actions";
 import { formatMoney } from "../services/service-form-client";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
@@ -551,18 +552,30 @@ export function InvoicesClient() {
                       </td>
                       <td className="px-4 py-3 text-slate-600">{invoice.due_date}</td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
-                            View
-                          </Button>
+                        <div className="flex flex-wrap gap-1.5">
+                          <TableActionButton
+                            aria-label={`View invoice ${invoice.invoice_number}`}
+                            title="View"
+                            onClick={() => openInvoicePrintView(invoice)}
+                          >
+                            <ViewIcon />
+                          </TableActionButton>
                           {isAdmin ? (
-                            <Button type="button" variant="secondary" onClick={() => setSelectedInvoiceId(invoice.id)}>
-                              Edit
-                            </Button>
+                            <TableActionButton
+                              aria-label={`Edit invoice ${invoice.invoice_number}`}
+                              title="Edit"
+                              onClick={() => setSelectedInvoiceId(invoice.id)}
+                            >
+                              <PencilIcon />
+                            </TableActionButton>
                           ) : null}
-                          <Button type="button" variant="secondary" onClick={() => openInvoicePrintView(invoice)}>
-                            Download PDF
-                          </Button>
+                          <TableActionButton
+                            aria-label={`Download invoice ${invoice.invoice_number} PDF`}
+                            title="Download PDF"
+                            onClick={() => openInvoicePrintView(invoice)}
+                          >
+                            <DownloadIcon />
+                          </TableActionButton>
                         </div>
                       </td>
                     </tr>

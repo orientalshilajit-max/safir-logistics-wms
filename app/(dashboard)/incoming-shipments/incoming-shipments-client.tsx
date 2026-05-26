@@ -14,6 +14,7 @@ import {
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
+import { PencilIcon, TableActionLink, ViewIcon } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
@@ -396,22 +397,20 @@ function ClientShipmentsTable({
               </td>
               <td className="px-2.5 py-2.5">
                 <div className="flex justify-end gap-0.5">
-                  <Link
+                  <TableActionLink
                     href={`/incoming-shipments/${shipment.id}`}
                     aria-label={`View shipment ${shipment.id.slice(0, 8)}`}
                     title="View"
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   >
                     <ViewIcon />
-                  </Link>
-                  <Link
+                  </TableActionLink>
+                  <TableActionLink
                     href={`/incoming-shipments/${shipment.id}/edit`}
                     aria-label={`Edit shipment ${shipment.id.slice(0, 8)}`}
                     title="Edit"
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   >
                     <PencilIcon />
-                  </Link>
+                  </TableActionLink>
                 </div>
               </td>
             </tr>
@@ -503,22 +502,4 @@ function formatCompactDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(new Date(value));
-}
-
-function ViewIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 20h9" />
-      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
-    </svg>
-  );
 }

@@ -68,6 +68,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const role = getUserRole(user);
+    const activeClientId = getUserClientId(user);
+
+    if (!session?.access_token || role !== "client" || !activeClientId) {
+      return;
+    }
+
+    void fetch("/api/auth/client-active", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    }).catch((syncError) => {
+      console.error("[client-active-sync]", syncError);
+    });
+  }, [session?.access_token, user]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       error,

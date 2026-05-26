@@ -13,6 +13,7 @@ import {
   Panel,
   QuickFilterButton,
 } from "@/app/components/wms-ui";
+import { SlidersIcon, TableActionButton } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "asin" | "barcode" | "photo_url">;
@@ -375,9 +376,13 @@ export function InventoryClient() {
                               </Button>
                             </div>
                           ) : (
-                            <Button type="button" variant="secondary" onClick={() => startEditing(row)}>
-                              Edit
-                            </Button>
+                            <TableActionButton
+                              aria-label={`Edit stock for ${row.products?.product_name ?? "inventory row"}`}
+                              title="Edit Stock"
+                              onClick={() => startEditing(row)}
+                            >
+                              <SlidersIcon />
+                            </TableActionButton>
                           )}
                         </td>
                       ) : null}

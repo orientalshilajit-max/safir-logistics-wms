@@ -7,6 +7,7 @@ import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import { EmptyState, ErrorBanner, inputClassName, LoadingState, Panel, StatusBadge } from "@/app/components/wms-ui";
+import { PencilIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products"> & {
@@ -309,23 +310,21 @@ export function ProductsClient() {
                   <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td>
                   <td className="px-2 py-2.5">
                     <div className="flex justify-end gap-1">
-                      <Link
+                      <TableActionLink
                         href={`/products/${product.id}/edit`}
-                        className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                         title="Edit product"
                         aria-label={`Edit ${product.product_name}`}
                       >
                         <PencilIcon />
-                      </Link>
-                      <button
-                        type="button"
-                        className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                      </TableActionLink>
+                      <TableActionButton
                         title={product.active && !historyProductIds.has(product.id) ? "Delete product" : product.active ? "Archive product" : "Restore product"}
                         aria-label={product.active && !historyProductIds.has(product.id) ? `Delete ${product.product_name}` : product.active ? `Archive ${product.product_name}` : `Restore ${product.product_name}`}
+                        tone={product.active && !historyProductIds.has(product.id) ? "danger" : "neutral"}
                         onClick={() => void handleArchiveDelete(product)}
                       >
                         {product.active && !historyProductIds.has(product.id) ? <TrashIcon /> : <ArchiveIcon />}
-                      </button>
+                      </TableActionButton>
                     </div>
                   </td>
                 </tr>
@@ -463,26 +462,6 @@ function SearchIcon() {
     <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 20h9" strokeLinecap="round" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 6h18" strokeLinecap="round" />
-      <path d="M8 6V4h8v2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 11v5M14 11v5" strokeLinecap="round" />
     </svg>
   );
 }
