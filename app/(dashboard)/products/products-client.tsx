@@ -335,21 +335,21 @@ function ProductsTable({
   onDeleteProduct: (product: Product) => Promise<void>;
 }) {
   return (
-    <table className="w-full min-w-[1260px] text-left text-sm tabular-nums">
-      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs font-medium text-slate-500 backdrop-blur">
+    <table className="w-full min-w-[1040px] table-fixed text-left text-sm tabular-nums">
+      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
         <tr>
-          <th className="w-10 px-4 py-3">
+          <th className="w-9 px-2.5 py-2.5">
             <input type="checkbox" aria-label="Select all products" className="size-4 rounded border-slate-300" />
           </th>
-          <th className="px-4 py-3 font-semibold">Product</th>
-          <th className="px-4 py-3 font-semibold">SKU <SortMark /></th>
-          <th className="px-4 py-3 font-semibold">ASIN / UPC <SortMark /></th>
-          <th className="px-4 py-3 font-semibold">FNSKU <SortMark /></th>
-          <th className="px-4 py-3 text-right font-semibold">In Stock (Units) <SortMark /></th>
-          <th className="px-4 py-3 text-right font-semibold">Incoming (Units) <SortMark /></th>
-          <th className="px-4 py-3 text-right font-semibold">Reserved (Units) <SortMark /></th>
-          <th className="px-4 py-3 font-semibold">Last Updated <SortMark /></th>
-          <th className="px-4 py-3 text-right font-semibold">Actions</th>
+          <th className="w-[22rem] px-2.5 py-2.5 font-semibold">Product</th>
+          <th className="w-24 px-2.5 py-2.5 font-semibold">SKU <SortMark /></th>
+          <th className="w-28 px-2.5 py-2.5 font-semibold">ASIN / UPC <SortMark /></th>
+          <th className="w-24 px-2.5 py-2.5 font-semibold">FNSKU <SortMark /></th>
+          <th className="w-20 px-2 py-2.5 text-center font-semibold">In Stock <SortMark /></th>
+          <th className="w-20 px-2 py-2.5 text-center font-semibold">Incoming <SortMark /></th>
+          <th className="w-20 px-2 py-2.5 text-center font-semibold">Reserved <SortMark /></th>
+          <th className="w-24 px-2.5 py-2.5 font-semibold">Last Updated <SortMark /></th>
+          <th className="w-20 px-2.5 py-2.5 text-right font-semibold">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100">
@@ -358,40 +358,40 @@ function ProductsTable({
 
           return (
             <tr key={product.id} className="cursor-pointer bg-white transition hover:bg-slate-50/80">
-              <td className="px-4 py-2.5">
+              <td className="px-2.5 py-2">
                 <input type="checkbox" aria-label={`Select ${product.product_name}`} className="size-4 rounded border-slate-300" />
               </td>
-              <td className="px-3 py-2.5 font-medium text-slate-950">
-                <div className="flex items-center gap-3">
+              <td className="px-2.5 py-2 font-medium text-slate-950">
+                <div className="flex min-w-0 items-center gap-2.5">
                   <ProductThumb product={product} />
-                  <div>
-                    <p className="font-medium text-slate-950">{product.product_name}</p>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-slate-950">{product.product_name}</p>
                     {!isClientPortal && product.clients ? (
-                      <p className="mt-0.5 text-xs text-slate-500">{product.clients.company_name}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{product.clients.company_name}</p>
                     ) : null}
                   </div>
                 </div>
               </td>
-              <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
-              <td className="px-3 py-2.5 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
-              <td className="px-3 py-2.5 text-slate-600">{product.fnsku ?? "-"}</td>
-              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.inStock)}</td>
-              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.incomingUnits)}</td>
-              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.reservedUnits)}</td>
-              <td className="px-3 py-2.5 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
-              <td className="px-3 py-2.5">
-                <div className="flex justify-end gap-1.5">
+              <td className="truncate px-2.5 py-2 text-slate-600">{product.sku ?? "-"}</td>
+              <td className="truncate px-2.5 py-2 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
+              <td className="truncate px-2.5 py-2 text-slate-600">{product.fnsku ?? "-"}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.inStock)}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.incomingUnits)}</td>
+              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.reservedUnits)}</td>
+              <td className="whitespace-nowrap px-2.5 py-2 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
+              <td className="px-2.5 py-2">
+                <div className="flex justify-end gap-0.5">
                   <Link
                     href={`/products/${product.id}/edit`}
                     aria-label={`Edit ${product.product_name}`}
-                    className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   >
                     <PencilIcon />
                   </Link>
                   <button
                     type="button"
                     aria-label={`Delete ${product.product_name}`}
-                    className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
                     onClick={() => void onDeleteProduct(product)}
                   >
                     <TrashIcon />
@@ -444,14 +444,14 @@ function ProductThumb({ product }: { product: Product }) {
   if (product.photo_url) {
     return (
       <span
-        className="block size-10 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
+        className="block size-9 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
         style={{ backgroundImage: `url("${product.photo_url}")` }}
       />
     );
   }
 
   return (
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
       <PackageIcon />
     </span>
   );
@@ -492,7 +492,6 @@ function formatDateTime(value: string) {
   const day = new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
-    year: "numeric",
   }).format(date);
   const time = new Intl.DateTimeFormat("en", {
     hour: "2-digit",
