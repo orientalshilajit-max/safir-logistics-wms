@@ -136,6 +136,7 @@ export function IncomingShipmentsClient({
       { total: 0, inTransit: 0, receiving: 0, received: 0 },
     );
   }, [shipments]);
+  const adminShipmentStats = shipmentStats;
 
   if (isClientPortal) {
     return (
@@ -216,15 +217,22 @@ export function IncomingShipmentsClient({
       <ErrorBanner message={error} />
 
       <div className="flex items-center justify-between gap-3">
-        <StatusBadge tone="blue">{filteredShipments.length} shipments</StatusBadge>
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Incoming Shipments</h2>
         <Link
           href="/incoming-shipments/new"
-          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+          className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
         >
           <span className="mr-2 text-base leading-none">+</span>
-          Add Shipment
+          Create Shipment
         </Link>
       </div>
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <ClientStat label="Total Shipments" value={adminShipmentStats.total} sublabel="All clients" />
+        <ClientStat label="In Transit" value={adminShipmentStats.inTransit} sublabel="Shipments on the way" />
+        <ClientStat label="Receiving / Arrived" value={adminShipmentStats.receiving} sublabel="At prep center" />
+        <ClientStat label="Completed / Received" value={adminShipmentStats.received} sublabel="Received" />
+      </section>
 
       <Panel title="Incoming shipments">
         <div className="mb-4 space-y-3">

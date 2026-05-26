@@ -9,6 +9,7 @@ import {
   Button,
   EmptyState,
   ErrorBanner,
+  inputClassName,
   LoadingState,
   Panel,
   StatusBadge,
@@ -21,6 +22,8 @@ const inviteCooldownMs = 60_000;
 export function ClientsClient() {
   const { session } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [creatingAccessId, setCreatingAccessId] = useState<string | null>(null);
   const [inviteCooldowns, setInviteCooldowns] = useState<Record<string, number>>({});
@@ -29,10 +32,35 @@ export function ClientsClient() {
   const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
   const [onboardingInstructions, setOnboardingInstructions] = useState<string[]>([]);
 
-  const activeCount = useMemo(
-    () => clients.filter((client) => normalizeClientStatus(client.status) === "Active").length,
+  const clientStats = useMemo(
+    () =>
+      clients.reduce(
+        (totals, client) => {
+          const status = normalizeClientStatus(client.status);
+          if (status === "Active") totals.active += 1;
+          if (status === "Pending") totals.pending += 1;
+          if (status === "Inactive") totals.inactive += 1;
+          return totals;
+        },
+        { active: 0, inactive: 0, pending: 0 },
+      ),
     [clients],
   );
+  const filteredClients = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+
+    return clients.filter((client) => {
+      const status = normalizeClientStatus(client.status);
+      const matchesStatus = statusFilter === "all" || status === statusFilter;
+      const matchesQuery =
+        !normalized ||
+        client.company_name.toLowerCase().includes(normalized) ||
+        client.contact_name.toLowerCase().includes(normalized) ||
+        client.email.toLowerCase().includes(normalized);
+
+      return matchesStatus && matchesQuery;
+    });
+  }, [clients, query, statusFilter]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
@@ -154,21 +182,46 @@ export function ClientsClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="space-y-5">
+      <div className="space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <StatusBadge tone="emerald">{activeCount} active</StatusBadge>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Clients</h2>
           <Link
             href="/clients/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
           >
             <span className="mr-2 text-base leading-none">+</span>
             Add Client
           </Link>
         </div>
+
+        <section className="grid gap-4 sm:grid-cols-3">
+          <AdminMetric label="Active" value={clientStats.active} />
+          <AdminMetric label="Pending" value={clientStats.pending} />
+          <AdminMetric label="Inactive" value={clientStats.inactive} />
+        </section>
+
         <Panel title="Client records">
+          <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_12rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search company, contact, or email"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="Active">Active</option>
+              <option value="Pending">Pending</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </div>
           {loading ? (
             <LoadingState label="Loading clients..." />
-          ) : clients.length === 0 ? (
+          ) : filteredClients.length === 0 ? (
             <EmptyState title="No clients yet" body="Create the first client account to start connecting products and shipments." />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
@@ -184,28 +237,29 @@ export function ClientsClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {clients.map((client) => (
-                    <tr key={client.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">{client.company_name}</td>
-                      <td className="px-4 py-3 text-slate-600">{client.contact_name}</td>
-                      <td className="px-4 py-3 text-slate-600">{client.email}</td>
-                      <td className="px-4 py-3">
+                  {filteredClients.map((client) => (
+                    <tr key={client.id} className="cursor-pointer hover:bg-slate-50">
+                      <td className="px-3 py-2.5 font-medium text-slate-950">{client.company_name}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{client.contact_name}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{client.email}</td>
+                      <td className="px-3 py-2.5">
                         <StatusBadge tone={clientStatusTone(client.status)}>
                           {normalizeClientStatus(client.status)}
                         </StatusBadge>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <StatusBadge tone={loginStatusTone(client.login_status)}>
                           {client.login_status}
                         </StatusBadge>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-wrap gap-1.5">
                           <Link
                             href={`/clients/${client.id}/edit`}
-                            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                            aria-label={`Edit ${client.company_name}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                           >
-                            Edit
+                            E
                           </Link>
                           {client.login_status === "no login" ? (
                             <InviteButton
@@ -228,8 +282,8 @@ export function ClientsClient() {
                               onClick={() => void createLoginAccess(client, "resend")}
                             />
                           )}
-                          <Button type="button" variant="danger" onClick={() => void deleteClient(client)}>
-                            Delete
+                          <Button type="button" variant="danger" className="size-8 px-0" onClick={() => void deleteClient(client)}>
+                            D
                           </Button>
                         </div>
                       </td>
@@ -262,6 +316,15 @@ export function ClientsClient() {
           ) : null}
         </Panel>
       ) : null}
+    </div>
+  );
+}
+
+function AdminMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
     </div>
   );
 }

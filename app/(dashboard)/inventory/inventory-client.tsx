@@ -54,12 +54,18 @@ export function InventoryClient() {
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
-        if (stockFilter === "available") return row.available_qty > 0;
-        if (stockFilter === "reserved") return row.reserved_qty > 0;
-        if (stockFilter === "damaged") return row.damaged_qty > 0;
-        return true;
+        const normalized = searchQuery.trim().toLowerCase();
+        const matchesSearch =
+          !normalized ||
+          row.products?.product_name.toLowerCase().includes(normalized) ||
+          row.products?.sku?.toLowerCase().includes(normalized) ||
+          row.products?.asin?.toLowerCase().includes(normalized);
+        if (stockFilter === "available") return row.available_qty > 0 && matchesSearch;
+        if (stockFilter === "reserved") return row.reserved_qty > 0 && matchesSearch;
+        if (stockFilter === "damaged") return row.damaged_qty > 0 && matchesSearch;
+        return matchesSearch;
       }),
-    [rows, stockFilter],
+    [rows, searchQuery, stockFilter],
   );
 
   const isClientPortal = role === "client";
@@ -276,6 +282,10 @@ export function InventoryClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Inventory</h2>
+      </div>
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Expected" value={totals.expected} />
         <Metric label="Received" value={totals.received} />
@@ -284,7 +294,14 @@ export function InventoryClient() {
       </section>
 
       <Panel title="Inventory balances">
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <input
+            className={inputClassName}
+            placeholder="Search product, SKU, ASIN"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
           <QuickFilterButton active={stockFilter === "all"} onClick={() => setStockFilter("all")}>
             All
           </QuickFilterButton>
@@ -297,6 +314,7 @@ export function InventoryClient() {
           <QuickFilterButton active={stockFilter === "damaged"} onClick={() => setStockFilter("damaged")}>
             Damaged
           </QuickFilterButton>
+          </div>
         </div>
         {loading ? (
           <LoadingState label="Loading inventory..." />

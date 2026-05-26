@@ -187,6 +187,21 @@ export function ProductsClient() {
       { totalProducts: 0, activeProducts: 0, totalInStock: 0, incomingUnits: 0 },
     );
   }, [incomingLines, inventoryRows, products]);
+  const adminProductStats = useMemo(
+    () =>
+      products.reduce(
+        (totals, product) => {
+          const summary = getClientProductSummary(product, inventoryRows, incomingLines);
+          totals.total += 1;
+          if (product.active) totals.active += 1;
+          totals.inStock += summary.inStock;
+          totals.incoming += summary.incomingUnits;
+          return totals;
+        },
+        { active: 0, incoming: 0, inStock: 0, total: 0 },
+      ),
+    [incomingLines, inventoryRows, products],
+  );
 
   if (isClientPortal) {
     return (
@@ -275,17 +290,23 @@ export function ProductsClient() {
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="space-y-5">
+      <div className="space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <StatusBadge tone="blue">{filteredProducts.length} products</StatusBadge>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
           <Link
             href="/products/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
           >
             <span className="mr-2 text-base leading-none">+</span>
             Add Product
           </Link>
         </div>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ClientStat label="Total Products" value={adminProductStats.total} sublabel="All clients" />
+          <ClientStat label="Active Products" value={adminProductStats.active} sublabel="In stock or incoming" />
+          <ClientStat label="Total In Stock" value={adminProductStats.inStock} sublabel="Units" />
+          <ClientStat label="Incoming Units" value={adminProductStats.incoming} sublabel="Units on the way" />
+        </section>
         <Panel title={isClientPortal ? "My Products" : "Product catalog"}>
           {isClientPortal ? null : (
             <div className="mb-4 grid gap-3 lg:grid-cols-3">
@@ -344,27 +365,33 @@ export function ProductsClient() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredProducts.map((product) => (
                     <tr key={product.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">{product.product_name}</td>
-                      <td className="px-4 py-3 text-slate-600">{product.clients?.company_name ?? "Unknown"}</td>
-                      <td className="px-4 py-3 text-slate-600">{product.sku ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{product.fnsku ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{product.asin ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{product.barcode ?? "-"}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 font-medium text-slate-950">
+                        <div className="flex items-center gap-3">
+                          <ProductThumb product={product} />
+                          <span>{product.product_name}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-600">{product.clients?.company_name ?? "Unknown"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{product.fnsku ?? "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{product.asin ?? "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{product.barcode ?? "-"}</td>
+                      <td className="px-3 py-2.5">
                         <StatusBadge tone={product.active ? "emerald" : "slate"}>
                           {product.active ? "Active" : "Inactive"}
                         </StatusBadge>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2">
+                      <td className="px-3 py-2.5">
+                        <div className="flex gap-1.5">
                           <Link
                             href={`/products/${product.id}/edit`}
-                            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                            aria-label={`Edit ${product.product_name}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                           >
-                            Edit
+                            E
                           </Link>
-                          <Button type="button" variant="danger" onClick={() => void deleteProduct(product)}>
-                            Delete
+                          <Button type="button" variant="danger" className="size-8 px-0" onClick={() => void deleteProduct(product)}>
+                            D
                           </Button>
                         </div>
                       </td>

@@ -196,20 +196,20 @@ export function RequestsClient() {
     setUpdatingStatusId(null);
   }
 
-  if (isClientPortal) {
-    const orderStats = requests.reduce(
-      (totals, request) => {
-        totals.total += 1;
-        const normalized = normalizeRequestStatus(request.status);
-        if (normalized === "Submitted") totals.pending += 1;
-        if (normalized === "In Progress" || normalized === "Approved" || normalized === "Ready to Ship") totals.inProgress += 1;
-        if (normalized === "Completed") totals.completed += 1;
-        if (request.status === "Shipped" || request.status === "Completed") totals.invoiced += 1;
-        return totals;
-      },
-      { total: 0, pending: 0, inProgress: 0, completed: 0, invoiced: 0 },
-    );
+  const requestStats = requests.reduce(
+    (totals, request) => {
+      totals.total += 1;
+      const normalized = normalizeRequestStatus(request.status);
+      if (normalized === "Submitted") totals.pending += 1;
+      if (normalized === "In Progress" || normalized === "Approved" || normalized === "Ready to Ship") totals.inProgress += 1;
+      if (normalized === "Completed") totals.completed += 1;
+      if (request.status === "Shipped" || request.status === "Completed") totals.invoiced += 1;
+      return totals;
+    },
+    { total: 0, pending: 0, inProgress: 0, completed: 0, invoiced: 0 },
+  );
 
+  if (isClientPortal) {
     return (
       <div className="space-y-5">
         <ErrorBanner message={error} />
@@ -226,11 +226,11 @@ export function RequestsClient() {
         </div>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <OrderMetric label="Total Orders" value={orderStats.total} sublabel="All time" />
-          <OrderMetric label="Pending Approval" value={orderStats.pending} sublabel="Orders" />
-          <OrderMetric label="In Progress" value={orderStats.inProgress} sublabel="Orders" />
-          <OrderMetric label="Completed" value={orderStats.completed} sublabel="Orders" />
-          <OrderMetric label="Invoiced" value={orderStats.invoiced} sublabel="Orders" />
+          <OrderMetric label="Total Orders" value={requestStats.total} sublabel="All time" />
+          <OrderMetric label="Pending Approval" value={requestStats.pending} sublabel="Orders" />
+          <OrderMetric label="In Progress" value={requestStats.inProgress} sublabel="Orders" />
+          <OrderMetric label="Completed" value={requestStats.completed} sublabel="Orders" />
+          <OrderMetric label="Invoiced" value={requestStats.invoiced} sublabel="Orders" />
         </section>
 
         <Panel title="Order Service">
@@ -355,14 +355,22 @@ export function RequestsClient() {
       <ErrorBanner message={error} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <StatusBadge tone="blue">{requests.length} requests</StatusBadge>
+        <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Requests</h2>
         <Link
-          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+          className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
           href="/requests/new"
         >
           + Add Request
         </Link>
       </div>
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <OrderMetric label="Total Orders" value={requestStats.total} sublabel="All clients" />
+        <OrderMetric label="Pending Approval" value={requestStats.pending} sublabel="Orders" />
+        <OrderMetric label="In Progress" value={requestStats.inProgress} sublabel="Orders" />
+        <OrderMetric label="Completed" value={requestStats.completed} sublabel="Orders" />
+        <OrderMetric label="Invoiced" value={requestStats.invoiced} sublabel="Orders" />
+      </section>
 
       <Panel title={isClientPortal ? "My requests" : "Requests"}>
         <div className="mb-4 flex flex-wrap gap-2">

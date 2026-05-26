@@ -451,12 +451,35 @@ export function InvoicesClient() {
     );
   }
 
+  const adminInvoiceStats = {
+    overdue: invoices
+      .filter((invoice) => invoice.status === "Overdue")
+      .reduce((sum, invoice) => sum + Number(invoice.balance_due ?? 0), 0),
+    paid: invoices
+      .filter((invoice) => invoice.status === "Paid")
+      .reduce((sum, invoice) => sum + Number(invoice.paid_amount ?? invoice.total_amount ?? 0), 0),
+    total: invoices.length,
+    unpaid: invoices
+      .filter((invoice) => ["Sent", "Unpaid", "Partial Paid"].includes(invoice.status))
+      .reduce((sum, invoice) => sum + Number(invoice.balance_due ?? 0), 0),
+  };
+
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
 
-      <div className="space-y-5">
-        <StatusBadge tone="blue">{filteredInvoices.length} invoices</StatusBadge>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Invoices</h2>
+        </div>
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <InvoiceMetric label="Total Invoices" value={String(adminInvoiceStats.total)} sublabel="All clients" />
+          <InvoiceMetric label="Open" value={formatMoney(adminInvoiceStats.unpaid)} sublabel="Outstanding" />
+          <InvoiceMetric label="Overdue" value={formatMoney(adminInvoiceStats.overdue)} sublabel="Past due" />
+          <InvoiceMetric label="Paid" value={formatMoney(adminInvoiceStats.paid)} sublabel="Paid revenue" />
+        </section>
+
         <Panel
           title={isClientPortal ? "My invoices" : "Invoices"}
         >

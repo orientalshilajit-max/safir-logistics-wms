@@ -428,18 +428,24 @@ export function DocumentsClient() {
         </div>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="flex items-center justify-between gap-3 xl:col-span-2">
-          <StatusBadge tone="blue">{documents.length} files</StatusBadge>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Documents & Files</h2>
           <Link
             href="/documents/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
           >
             <span className="mr-2 text-base leading-none">+</span>
             Add Document
           </Link>
         </div>
-        <Panel title="Files" description="Global and client-specific documents stored in Supabase Storage.">
+        <section className="grid gap-4 sm:grid-cols-2 xl:col-span-2 xl:grid-cols-4">
+          <FileMetric label="Total Files" value={documents.length} sublabel="All files" />
+          <FileMetric label="Global Files" value={documents.filter((document) => document.file_scope === "global").length} sublabel="Shared" />
+          <FileMetric label="Client Files" value={documents.filter((document) => document.file_scope === "client_specific").length} sublabel="Client-specific" />
+          <FileMetric label="Recently Added" value={documents.filter((document) => isWithinDateFilter(document.created_at, "week")).length} sublabel="This week" />
+        </section>
+        <Panel title="Files">
           <div className="mb-4 flex flex-wrap gap-2">
             {[
               ["all", "All Files"],
@@ -546,12 +552,17 @@ export function DocumentsClient() {
                   {filteredDocuments.map((document) => (
                     <tr key={document.id} className="hover:bg-slate-50">
                       <td className={`${tableCellClassName} font-medium text-slate-950`}>
-                        <div>{document.file_name}</div>
-                        {document.note ? (
-                          <div className="mt-1 max-w-xs truncate text-xs font-normal text-slate-500">
-                            {document.note}
+                        <div className="flex items-center gap-3">
+                          <FileIcon type={getFileType(document)} />
+                          <div>
+                            <div>{document.file_name}</div>
+                            {document.note ? (
+                              <div className="mt-1 max-w-xs truncate text-xs font-normal text-slate-500">
+                                {document.note}
+                              </div>
+                            ) : null}
                           </div>
-                        ) : null}
+                        </div>
                       </td>
                       <td className={tableCellClassName}>
                         <StatusBadge tone={document.file_scope === "global" ? "indigo" : "blue"}>
@@ -581,36 +592,36 @@ export function DocumentsClient() {
                         {formatDate(document.created_at)}
                       </td>
                       <td className={tableCellClassName}>
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="secondary" onClick={() => setPreviewDocument(document)}>
-                            Preview
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button type="button" variant="secondary" className="size-8 px-0" onClick={() => setPreviewDocument(document)}>
+                            P
                           </Button>
                           {isAdmin || (document.file_scope === "client_specific" && document.uploaded_by_user_id === user?.id) ? (
                             <Link
                               href={`/documents/${document.id}/edit`}
-                              className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                              className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                             >
-                              Edit
+                              E
                             </Link>
                           ) : null}
                           <a
-                            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                             href={document.preview_url ?? document.file_url}
                             target="_blank"
                             rel="noreferrer"
                           >
-                            Open
+                            O
                           </a>
-                          <Button type="button" variant="secondary" onClick={() => openPrintView(document)}>
-                            Print view
+                          <Button type="button" variant="secondary" className="size-8 px-0" onClick={() => openPrintView(document)}>
+                            Pr
                           </Button>
                           {isAdmin ? (
                             <>
-                              <Button type="button" variant="secondary" disabled={updatingId === document.id} onClick={() => void toggleVisibility(document)}>
-                                {document.visible_to_client ? "Make internal" : "Make visible"}
+                              <Button type="button" variant="secondary" className="size-8 px-0" disabled={updatingId === document.id} onClick={() => void toggleVisibility(document)}>
+                                {document.visible_to_client ? "I" : "V"}
                               </Button>
-                              <Button type="button" variant="danger" disabled={updatingId === document.id} onClick={() => void archiveDocument(document)}>
-                                Archive
+                              <Button type="button" variant="danger" className="size-8 px-0" disabled={updatingId === document.id} onClick={() => void archiveDocument(document)}>
+                                A
                               </Button>
                             </>
                           ) : null}
