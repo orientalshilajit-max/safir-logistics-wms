@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
-  Button,
   EmptyState,
   ErrorBanner,
   inputClassName,
@@ -48,6 +47,7 @@ export function ProductsClient() {
   const [asinQuery, setAsinQuery] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("all");
   const [stockStatusFilter, setStockStatusFilter] = useState("all");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
@@ -156,21 +156,21 @@ export function ProductsClient() {
     }
   }
 
-  const clientFilteredProducts = useMemo(() => {
-    if (!isClientPortal) return filteredProducts;
-
+  const displayProducts = useMemo(() => {
     return filteredProducts.filter((product) => {
       const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-      const matchesStatus = clientStatusFilter === "all" || summary.status === clientStatusFilter;
+      const status = getProductTableStatus(product, summary);
+      const matchesStatus = clientStatusFilter === "all" || status === clientStatusFilter;
       const matchesStock =
         stockStatusFilter === "all" ||
         (stockStatusFilter === "in_stock" && summary.inStock > 0) ||
         (stockStatusFilter === "incoming" && summary.incomingUnits > 0) ||
-        (stockStatusFilter === "reserved" && summary.reservedUnits > 0);
+        (stockStatusFilter === "reserved" && summary.reservedUnits > 0) ||
+        (stockStatusFilter === "out_of_stock" && summary.inStock === 0);
 
       return matchesStatus && matchesStock;
     });
-  }, [clientStatusFilter, filteredProducts, incomingLines, inventoryRows, isClientPortal, stockStatusFilter]);
+  }, [clientStatusFilter, filteredProducts, incomingLines, inventoryRows, stockStatusFilter]);
 
   const clientProductStats = useMemo(() => {
     return products.reduce(
@@ -203,203 +203,131 @@ export function ProductsClient() {
     [incomingLines, inventoryRows, products],
   );
 
-  if (isClientPortal) {
-    return (
-      <div className="space-y-5">
-        <ErrorBanner message={error} />
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
 
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
-          <Link
-            href="/products/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
-          >
-            <span className="mr-2 text-base leading-none">+</span>
-            Add Product
-          </Link>
-        </div>
-
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ClientStat label="Total Products" value={clientProductStats.totalProducts} sublabel="All time" />
-          <ClientStat label="Active Products" value={clientProductStats.activeProducts} sublabel="In stock or incoming" />
-          <ClientStat label="Total In Stock" value={clientProductStats.totalInStock} sublabel="Units" />
-          <ClientStat label="Incoming Units" value={clientProductStats.incomingUnits} sublabel="Units on the way" />
-        </section>
-
-        <Panel title="Products">
-          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_11rem_11rem]">
-            <input
-              className={inputClassName}
-              placeholder="Search by product name, SKU, ASIN or UPC"
-              value={productQuery}
-              onChange={(event) => setProductQuery(event.target.value)}
-            />
-            <select
-              className={inputClassName}
-              value={clientStatusFilter}
-              onChange={(event) => setClientStatusFilter(event.target.value)}
-            >
-              <option value="all">All statuses</option>
-              <option value="Available">Available</option>
-              <option value="Receiving">Receiving</option>
-              <option value="In Transit">In Transit</option>
-              <option value="Issue">Issue</option>
-            </select>
-            <select
-              className={inputClassName}
-              value={stockStatusFilter}
-              onChange={(event) => setStockStatusFilter(event.target.value)}
-            >
-              <option value="all">All stock</option>
-              <option value="in_stock">In stock</option>
-              <option value="incoming">Incoming</option>
-              <option value="reserved">Reserved</option>
-            </select>
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
+            <p className="mt-1 text-sm text-slate-500">View and manage all your products.</p>
           </div>
-
+          <div className="flex items-center gap-2">
+            <Link
+              href="/products/new"
+              className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
+            >
+              <span className="mr-2 text-base leading-none">+</span>
+              Add Product
+            </Link>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <UploadIcon />
+              Import
+            </button>
+          </div>
+        </div>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ProductStat icon={<PackageIcon />} tone="blue" label="Total Products" value={isClientPortal ? clientProductStats.totalProducts : adminProductStats.total} sublabel={isClientPortal ? "All time" : "All clients"} />
+          <ProductStat icon={<ActiveBoxIcon />} tone="emerald" label="Active Products" value={isClientPortal ? clientProductStats.activeProducts : adminProductStats.active} sublabel="In stock or incoming" />
+          <ProductStat icon={<TruckIcon />} tone="orange" label="Total In Stock" value={isClientPortal ? clientProductStats.totalInStock : adminProductStats.inStock} sublabel="Units" />
+          <ProductStat icon={<DownloadIcon />} tone="violet" label="Incoming Units" value={isClientPortal ? clientProductStats.incomingUnits : adminProductStats.incoming} sublabel="Units on the way" />
+        </section>
+        <Panel title="Products">
+          <div className="mb-4 space-y-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_11rem_10rem]">
+                <div className="relative">
+                  <SearchIcon />
+                  <input
+                    className={`${inputClassName} pl-9`}
+                    placeholder="Search by product name, SKU, ASIN or UPC"
+                    value={productQuery}
+                    onChange={(event) => setProductQuery(event.target.value)}
+                  />
+                </div>
+                <select
+                  className={inputClassName}
+                  value={clientStatusFilter}
+                  onChange={(event) => setClientStatusFilter(event.target.value)}
+                >
+                  <option value="all">Status: All</option>
+                  <option value="Active">Active</option>
+                  <option value="Low Stock">Low Stock</option>
+                  <option value="Incoming">Incoming</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
+                <select
+                  className={inputClassName}
+                  value={stockStatusFilter}
+                  onChange={(event) => setStockStatusFilter(event.target.value)}
+                >
+                  <option value="all">Stock Status: All</option>
+                  <option value="in_stock">In stock</option>
+                  <option value="incoming">Incoming</option>
+                  <option value="reserved">Reserved</option>
+                  <option value="out_of_stock">Out of stock</option>
+                </select>
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => setShowMoreFilters((current) => !current)}
+                >
+                  <FilterIcon />
+                  More Filters
+                </button>
+            </div>
+            {showMoreFilters ? (
+              <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/70 p-3 lg:grid-cols-2">
+                {isClientPortal ? null : (
+                  <select
+                    className={inputClassName}
+                    value={clientFilter}
+                    onChange={(event) => setClientFilter(event.target.value)}
+                  >
+                    <option value="all">All clients</option>
+                    {clientOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  className={inputClassName}
+                  placeholder="Filter by ASIN"
+                  value={asinQuery}
+                  onChange={(event) => setAsinQuery(event.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
           {loading ? (
             <LoadingState label="Loading products..." />
-          ) : clientFilteredProducts.length === 0 ? (
+          ) : displayProducts.length === 0 ? (
             <EmptyState
               title="No products found"
               body="Add a product or adjust the filters."
               action={
                 <Link
                   href="/products/new"
-                  className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                  className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
                 >
                   + Add Product
                 </Link>
               }
             />
           ) : (
-            <div className="max-h-[42rem] overflow-auto">
-              <ClientProductsTable
-                products={clientFilteredProducts}
+            <div className="max-h-[44rem] overflow-auto rounded-md border border-slate-200">
+              <ProductsTable
+                products={displayProducts}
                 inventoryRows={inventoryRows}
                 incomingLines={incomingLines}
+                isClientPortal={isClientPortal}
+                onDeleteProduct={deleteProduct}
               />
-            </div>
-          )}
-        </Panel>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      <ErrorBanner message={error} />
-
-      <div className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
-          <Link
-            href="/products/new"
-            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
-          >
-            <span className="mr-2 text-base leading-none">+</span>
-            Add Product
-          </Link>
-        </div>
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ClientStat label="Total Products" value={adminProductStats.total} sublabel="All clients" />
-          <ClientStat label="Active Products" value={adminProductStats.active} sublabel="In stock or incoming" />
-          <ClientStat label="Total In Stock" value={adminProductStats.inStock} sublabel="Units" />
-          <ClientStat label="Incoming Units" value={adminProductStats.incoming} sublabel="Units on the way" />
-        </section>
-        <Panel title={isClientPortal ? "My Products" : "Product catalog"}>
-          {isClientPortal ? null : (
-            <div className="mb-4 grid gap-3 lg:grid-cols-3">
-              <select
-                className={inputClassName}
-                value={clientFilter}
-                onChange={(event) => setClientFilter(event.target.value)}
-              >
-                <option value="all">All clients</option>
-                {clientOptions.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              <input
-                className={inputClassName}
-                placeholder="Filter by product or SKU"
-                value={productQuery}
-                onChange={(event) => setProductQuery(event.target.value)}
-              />
-              <input
-                className={inputClassName}
-                placeholder="Filter by ASIN"
-                value={asinQuery}
-                onChange={(event) => setAsinQuery(event.target.value)}
-              />
-            </div>
-          )}
-          {loading ? (
-            <LoadingState label="Loading products..." />
-          ) : filteredProducts.length === 0 ? (
-            <EmptyState title="No products yet" body="Create product records so incoming shipments can reference them." />
-          ) : (
-            <div className="max-h-[34rem] overflow-auto">
-              {isClientPortal ? (
-                <ClientProductsTable
-                  products={filteredProducts}
-                  inventoryRows={inventoryRows}
-                  incomingLines={incomingLines}
-                />
-              ) : (
-              <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
-                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Product</th>
-                    <th className="px-4 py-3 font-semibold">Client</th>
-                    <th className="px-4 py-3 font-semibold">SKU</th>
-                    <th className="px-4 py-3 font-semibold">FNSKU</th>
-                    <th className="px-4 py-3 font-semibold">ASIN</th>
-                    <th className="px-4 py-3 font-semibold">Barcode</th>
-                    <th className="px-4 py-3 font-semibold">State</th>
-                    <th className="px-4 py-3 font-semibold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredProducts.map((product) => (
-                    <tr key={product.id} className="hover:bg-slate-50">
-                      <td className="px-3 py-2.5 font-medium text-slate-950">
-                        <div className="flex items-center gap-3">
-                          <ProductThumb product={product} />
-                          <span>{product.product_name}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-slate-600">{product.clients?.company_name ?? "Unknown"}</td>
-                      <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
-                      <td className="px-3 py-2.5 text-slate-600">{product.fnsku ?? "-"}</td>
-                      <td className="px-3 py-2.5 text-slate-600">{product.asin ?? "-"}</td>
-                      <td className="px-3 py-2.5 text-slate-600">{product.barcode ?? "-"}</td>
-                      <td className="px-3 py-2.5">
-                        <StatusBadge tone={product.active ? "emerald" : "slate"}>
-                          {product.active ? "Active" : "Inactive"}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex gap-1.5">
-                          <Link
-                            href={`/products/${product.id}/edit`}
-                            aria-label={`Edit ${product.product_name}`}
-                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
-                          >
-                            E
-                          </Link>
-                          <Button type="button" variant="danger" className="size-8 px-0" onClick={() => void deleteProduct(product)}>
-                            D
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              )}
             </div>
           )}
         </Panel>
@@ -408,28 +336,35 @@ export function ProductsClient() {
   );
 }
 
-function ClientProductsTable({
+function ProductsTable({
   products,
   inventoryRows,
   incomingLines,
+  isClientPortal,
+  onDeleteProduct,
 }: {
   products: Product[];
   inventoryRows: InventoryRow[];
   incomingLines: IncomingProductLine[];
+  isClientPortal: boolean;
+  onDeleteProduct: (product: Product) => Promise<void>;
 }) {
   return (
-    <table className="w-full min-w-[1080px] text-left text-sm tabular-nums">
-      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+    <table className="w-full min-w-[1160px] text-left text-sm tabular-nums">
+      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs font-medium text-slate-500 backdrop-blur">
         <tr>
+          <th className="w-10 px-4 py-3">
+            <input type="checkbox" aria-label="Select all products" className="size-4 rounded border-slate-300" />
+          </th>
           <th className="px-4 py-3 font-semibold">Product</th>
-          <th className="px-4 py-3 font-semibold">SKU</th>
-          <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
-          <th className="px-4 py-3 font-semibold">In Stock Units</th>
-          <th className="px-4 py-3 font-semibold">Incoming Units</th>
-          <th className="px-4 py-3 font-semibold">Reserved Units</th>
-          <th className="px-4 py-3 font-semibold">Last Updated</th>
+          <th className="px-4 py-3 font-semibold">SKU <SortMark /></th>
+          <th className="px-4 py-3 font-semibold">ASIN / UPC <SortMark /></th>
+          <th className="px-4 py-3 text-right font-semibold">In Stock (Units) <SortMark /></th>
+          <th className="px-4 py-3 text-right font-semibold">Incoming (Units) <SortMark /></th>
+          <th className="px-4 py-3 text-right font-semibold">Reserved (Units) <SortMark /></th>
+          <th className="px-4 py-3 font-semibold">Last Updated <SortMark /></th>
           <th className="px-4 py-3 font-semibold">Status</th>
-          <th className="px-4 py-3 font-semibold">Actions</th>
+          <th className="px-4 py-3 text-right font-semibold">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100">
@@ -437,38 +372,60 @@ function ClientProductsTable({
           const summary = getClientProductSummary(product, inventoryRows, incomingLines);
 
           return (
-            <tr key={product.id} className="hover:bg-slate-50">
+            <tr key={product.id} className="cursor-pointer bg-white transition hover:bg-slate-50/80">
+              <td className="px-4 py-2.5">
+                <input type="checkbox" aria-label={`Select ${product.product_name}`} className="size-4 rounded border-slate-300" />
+              </td>
               <td className="px-3 py-2.5 font-medium text-slate-950">
                 <div className="flex items-center gap-3">
                   <ProductThumb product={product} />
-                  <span>{product.product_name}</span>
+                  <div>
+                    <p className="font-medium text-slate-950">{product.product_name}</p>
+                    {!isClientPortal && product.clients ? (
+                      <p className="mt-0.5 text-xs text-slate-500">{product.clients.company_name}</p>
+                    ) : null}
+                  </div>
                 </div>
               </td>
               <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
               <td className="px-3 py-2.5 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
-              <td className="px-3 py-2.5 text-slate-600">{summary.inStock}</td>
-              <td className="px-3 py-2.5 text-slate-600">{summary.incomingUnits}</td>
-              <td className="px-3 py-2.5 text-slate-600">{summary.reservedUnits}</td>
-              <td className="px-3 py-2.5 text-slate-600">{formatDate(summary.lastUpdated ?? product.updated_at)}</td>
+              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.inStock)}</td>
+              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.incomingUnits)}</td>
+              <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.reservedUnits)}</td>
+              <td className="px-3 py-2.5 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-3 py-2.5">
-                <StatusBadge tone={clientProductStatusTone(summary.status)}>{summary.status}</StatusBadge>
+                {(() => {
+                  const status = getProductTableStatus(product, summary);
+                  return <StatusBadge tone={productTableStatusTone(status)}>{status}</StatusBadge>;
+                })()}
               </td>
               <td className="px-3 py-2.5">
-                <div className="flex gap-1.5">
+                <div className="flex justify-end gap-1.5">
                   <Link
                     href={`/products/${product.id}/edit`}
                     aria-label={`Edit ${product.product_name}`}
-                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                    className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
                   >
-                    E
+                    <PencilIcon />
                   </Link>
-                  <Link
-                    href={`/incoming-shipments?status=${summary.status === "Issue" ? "issue" : "all"}`}
-                    aria-label={`View ${product.product_name}`}
-                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
-                  >
-                    V
-                  </Link>
+                  {isClientPortal ? (
+                    <Link
+                      href={`/incoming-shipments?status=${summary.incomingUnits > 0 ? "in_transit" : "all"}`}
+                      aria-label={`View ${product.product_name} shipments`}
+                      className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                    >
+                      <MoreIcon />
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={`Delete ${product.product_name}`}
+                      className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+                      onClick={() => void onDeleteProduct(product)}
+                    >
+                      <MoreIcon />
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -479,20 +436,36 @@ function ClientProductsTable({
   );
 }
 
-function ClientStat({
+function ProductStat({
+  icon,
+  tone,
   label,
   value,
   sublabel,
 }: {
+  icon: ReactNode;
+  tone: "blue" | "emerald" | "orange" | "violet";
   label: string;
   value: number;
   sublabel: string;
 }) {
+  const toneClass = {
+    blue: "bg-blue-50 text-blue-600",
+    emerald: "bg-emerald-50 text-emerald-600",
+    orange: "bg-orange-50 text-orange-600",
+    violet: "bg-violet-50 text-violet-600",
+  }[tone];
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</p>
-      <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
+    <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <span className={`flex size-12 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
+        {icon}
+      </span>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{formatNumber(value)}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{sublabel}</p>
+      </div>
     </div>
   );
 }
@@ -501,15 +474,15 @@ function ProductThumb({ product }: { product: Product }) {
   if (product.photo_url) {
     return (
       <span
-        className="block size-9 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
+        className="block size-10 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
         style={{ backgroundImage: `url("${product.photo_url}")` }}
       />
     );
   }
 
   return (
-    <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-xs font-semibold text-slate-500">
-      {product.product_name.slice(0, 2).toUpperCase()}
+    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
+      <PackageIcon />
     </span>
   );
 }
@@ -579,17 +552,135 @@ function getClientProductStatus(
   return "In Transit";
 }
 
-function clientProductStatusTone(status: string) {
-  if (status === "Available") return "emerald";
-  if (status === "Receiving") return "orange";
-  if (status === "Issue") return "rose";
-  return "blue";
+function getProductTableStatus(
+  product: Product,
+  summary: ReturnType<typeof getClientProductSummary>,
+) {
+  if (!product.active) return "Inactive";
+  if (summary.inStock > 0 && summary.inStock <= 10) return "Low Stock";
+  if (summary.inStock === 0 && summary.incomingUnits > 0) return "Incoming";
+  return "Active";
 }
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en", {
+function productTableStatusTone(status: string) {
+  if (status === "Active") return "emerald";
+  if (status === "Low Stock") return "orange";
+  if (status === "Incoming") return "blue";
+  return "slate";
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en").format(value);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  const day = new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
+  const time = new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+
+  return (
+    <span className="leading-tight">
+      <span className="block">{day}</span>
+      <span className="block text-xs text-slate-500">{time}</span>
+    </span>
+  );
+}
+
+function SortMark() {
+  return <span className="ml-1 text-slate-300">↕</span>;
+}
+
+function SearchIcon() {
+  return (
+    <svg className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
+function PackageIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m21 16-9 5-9-5V8l9-5 9 5v8Z" />
+      <path d="m3.5 8.5 8.5 5 8.5-5" />
+      <path d="M12 13.5V21" />
+    </svg>
+  );
+}
+
+function ActiveBoxIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m21 16-9 5-9-5V8l9-5 9 5v8Z" />
+      <path d="m8 12 2.5 2.5L16 9" />
+    </svg>
+  );
+}
+
+function TruckIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 7h11v10H3z" />
+      <path d="M14 10h4l3 3v4h-7z" />
+      <circle cx="7" cy="18" r="2" />
+      <circle cx="18" cy="18" r="2" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 21V9" />
+      <path d="m7 14 5-5 5 5" />
+      <path d="M5 5h14" />
+    </svg>
+  );
+}
+
+function FilterIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 7h16" />
+      <path d="M7 12h10" />
+      <path d="M10 17h4" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="19" r="1" />
+    </svg>
+  );
 }

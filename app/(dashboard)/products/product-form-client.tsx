@@ -60,6 +60,7 @@ export function ProductFormClient({ productId }: { productId?: string }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [form, setForm] = useState<ProductForm>(emptyForm);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -181,6 +182,20 @@ export function ProductFormClient({ productId }: { productId?: string }) {
     setSaving(true);
     setError(null);
 
+    let photoUrl = form.photo_url.trim() || null;
+
+    if (imageFile) {
+      const uploadResult = await uploadProductImage(imageFile, form.client_id);
+
+      if (uploadResult.error) {
+        setError(uploadResult.error);
+        setSaving(false);
+        return;
+      }
+
+      photoUrl = uploadResult.url;
+    }
+
     const payload = {
       client_id: form.client_id,
       product_name: form.product_name.trim(),
@@ -189,7 +204,7 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       asin: form.asin.trim() || null,
       barcode: form.barcode.trim() || null,
       barcode_type: form.barcode_type.trim() || null,
-      photo_url: form.photo_url.trim() || null,
+      photo_url: photoUrl,
       notes: form.notes.trim() || null,
       active: form.active,
     };
@@ -307,6 +322,41 @@ export function ProductFormClient({ productId }: { productId?: string }) {
           <Field label="Product name">
             <input className={inputClassName} required value={form.product_name} onChange={(event) => setForm({ ...form, product_name: event.target.value })} />
           </Field>
+          <Field label="Product image">
+            <div className="flex items-center gap-3">
+              <span
+                className="block size-14 shrink-0 rounded-md border border-slate-200 bg-slate-100 bg-cover bg-center"
+                style={form.photo_url ? { backgroundImage: `url("${form.photo_url}")` } : undefined}
+              />
+              <div className="min-w-0 flex-1">
+                <input
+                  className={inputClassName}
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  type="file"
+                  onChange={(event) => {
+                    const nextFile = event.target.files?.[0] ?? null;
+
+                    if (!nextFile) {
+                      setImageFile(null);
+                      return;
+                    }
+
+                    if (!["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(nextFile.type)) {
+                      setError("Upload a PNG, JPG, JPEG, or WEBP image.");
+                      event.target.value = "";
+                      return;
+                    }
+
+                    setError(null);
+                    setImageFile(nextFile);
+                  }}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  {imageFile ? imageFile.name : form.photo_url ? "Current product image will be kept." : "PNG, JPG, JPEG, or WEBP."}
+                </p>
+              </div>
+            </div>
+          </Field>
           {isClientPortal ? (
             <>
               <Field label="Quantity of items">
@@ -368,4 +418,26 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       </Panel>
     </div>
   );
+}
+
+async function uploadProductImage(file: File, clientId: string): Promise<{ url: string | null; error: string | null }> {
+  const safeName = file.name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-+/g, "-");
+  const storagePath = `${clientId}/${Date.now()}-${safeName || "product-image"}`;
+  const { error } = await supabase.storage
+    .from("product-images")
+    .upload(storagePath, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+  if (error) {
+    return { url: null, error: error.message };
+  }
+
+  const { data } = supabase.storage.from("product-images").getPublicUrl(storagePath);
+
+  return { url: data.publicUrl, error: null };
 }
