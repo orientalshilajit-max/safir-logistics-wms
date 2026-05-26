@@ -1,207 +1,198 @@
 "use client";
 
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
-import {
-  EmptyState,
-  ErrorBanner,
-  inputClassName,
-  LoadingState,
-  Panel,
-  textAreaClassName,
-} from "@/app/components/wms-ui";
+import { EmptyState, ErrorBanner, inputClassName, LoadingState, Panel, StatusBadge } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products"> & {
   clients: Client | null;
 };
-type InventoryRow = Pick<
-  Tables<"inventory">,
-  | "id"
-  | "client_id"
-  | "product_id"
-  | "expected_qty"
-  | "received_qty"
-  | "available_qty"
-  | "reserved_qty"
-  | "processing_qty"
-  | "storage_boxes"
-  | "updated_at"
->;
-type IncomingProductLine = Pick<
-  Tables<"incoming_items">,
-  | "inventory_posted_at"
-  | "product_id"
-  | "expected_quantity"
-  | "received_quantity"
-  | "is_unexpected"
-  | "tracking_box_id"
-> & {
-  incoming_shipments: {
-    number_of_boxes: number;
-    statuses: Pick<Tables<"statuses">, "name"> | null;
-  } | null;
-};
-type RequestProductLine = Pick<Tables<"request_items">, "product_id">;
-type SortBy = "manual" | "stock" | "updated" | "customer" | "name";
-type SortDirection = "asc" | "desc";
-type AdjustmentType = "received_qty" | "expected_qty" | "reserved_qty" | "available_qty" | "storage_boxes";
-type InventoryDraft = Record<AdjustmentType, string>;
-
-const adjustmentLabels: Record<AdjustmentType, string> = {
-  received_qty: "In Stock",
-  expected_qty: "Incoming",
-  reserved_qty: "Reserved",
-  available_qty: "Available",
-  storage_boxes: "Storage Boxes",
+type ProductHistoryRow = {
+  product_id: string;
 };
 
-const inventoryFields: Array<{ key: AdjustmentType; label: string; inputLabel: string }> = [
-  { key: "received_qty", label: adjustmentLabels.received_qty, inputLabel: "in_stock_units" },
-  { key: "expected_qty", label: adjustmentLabels.expected_qty, inputLabel: "incoming_units" },
-  { key: "reserved_qty", label: adjustmentLabels.reserved_qty, inputLabel: "reserved_units" },
-  { key: "available_qty", label: adjustmentLabels.available_qty, inputLabel: "available_units" },
-  { key: "storage_boxes", label: adjustmentLabels.storage_boxes, inputLabel: "storage_boxes" },
-];
+type StatusFilter = "active" | "archived" | "all";
+type DateFilter = "all" | "today" | "week" | "month" | "year";
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
+  const isClientPortal = role === "client";
+  const isAdmin = role === "admin";
   const [products, setProducts] = useState<Product[]>([]);
-  const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
-  const [incomingLines, setIncomingLines] = useState<IncomingProductLine[]>([]);
-  const [requestLines, setRequestLines] = useState<RequestProductLine[]>([]);
-  const [productQuery, setProductQuery] = useState("");
-  const [clientStatusFilter, setClientStatusFilter] = useState("active");
-  const [adminClientFilter, setAdminClientFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<SortBy>("manual");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
-  const [adjustmentProduct, setAdjustmentProduct] = useState<Product | null>(null);
-  const [adjustmentReason, setAdjustmentReason] = useState("");
-  const [adjustmentNotes, setAdjustmentNotes] = useState("");
-  const [inventoryDraft, setInventoryDraft] = useState<InventoryDraft>(emptyInventoryDraft());
-  const [adjusting, setAdjusting] = useState(false);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [inventoryHistory, setInventoryHistory] = useState<ProductHistoryRow[]>([]);
+  const [incomingHistory, setIncomingHistory] = useState<ProductHistoryRow[]>([]);
+  const [requestHistory, setRequestHistory] = useState<ProductHistoryRow[]>([]);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
+  const [clientFilter, setClientFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const isClientPortal = role === "client";
-  const isAdmin = role === "admin";
-
-  const clientOptions = useMemo(() => {
-    const byId = new Map<string, string>();
-
-    products.forEach((product) => {
-      if (product.clients) {
-        byId.set(product.clients.id, product.clients.company_name);
-      }
-    });
-
-    return Array.from(byId.entries()).sort((first, second) => first[1].localeCompare(second[1]));
-  }, [products]);
-
-  const filteredProducts = useMemo(() => {
-    const productSearch = productQuery.trim().toLowerCase();
-
-    return products.filter((product) => {
-      const matchesClient = !isAdmin || adminClientFilter === "all" || product.client_id === adminClientFilter;
-      const matchesProduct =
-        !productSearch ||
-        product.product_name.toLowerCase().includes(productSearch) ||
-        (product.sku ?? "").toLowerCase().includes(productSearch) ||
-        (product.asin ?? "").toLowerCase().includes(productSearch) ||
-        (product.barcode ?? "").toLowerCase().includes(productSearch);
-
-      return matchesClient && matchesProduct;
-    });
-  }, [adminClientFilter, isAdmin, productQuery, products]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    const productsQuery = supabase
+    let productsQuery = supabase
       .from("products")
       .select("*, clients(id, company_name)")
       .is("deleted_at", null)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
-    const inventoryQuery = supabase
+
+    let inventoryQuery = supabase
       .from("inventory")
-      .select("id, client_id, product_id, expected_qty, received_qty, available_qty, reserved_qty, processing_qty, storage_boxes, updated_at")
+      .select("product_id")
       .is("deleted_at", null);
-    const incomingQuery = supabase
+
+    let incomingQuery = supabase
       .from("incoming_items")
-      .select("inventory_posted_at, product_id, expected_quantity, received_quantity, is_unexpected, tracking_box_id, incoming_shipments!inner(number_of_boxes, statuses(name))")
+      .select("product_id, incoming_shipments!inner(client_id)")
       .is("deleted_at", null);
-    const requestItemsQuery = supabase
+
+    let requestQuery = supabase
       .from("request_items")
       .select("product_id, service_requests!inner(client_id)")
       .is("deleted_at", null);
 
     if (isClientPortal && clientId) {
-      productsQuery.eq("client_id", clientId);
-      inventoryQuery.eq("client_id", clientId);
-      incomingQuery.eq("incoming_shipments.client_id", clientId);
-      requestItemsQuery.eq("service_requests.client_id", clientId);
+      productsQuery = productsQuery.eq("client_id", clientId);
+      inventoryQuery = inventoryQuery.eq("client_id", clientId);
+      incomingQuery = incomingQuery.eq("incoming_shipments.client_id", clientId);
+      requestQuery = requestQuery.eq("service_requests.client_id", clientId);
     }
 
-    const [productsResult, inventoryResult, incomingResult, requestItemsResult] = await Promise.all([
+    const [productsResult, clientsResult, inventoryResult, incomingResult, requestResult] = await Promise.all([
       productsQuery,
+      isAdmin
+        ? supabase
+            .from("clients")
+            .select("id, company_name")
+            .is("deleted_at", null)
+            .order("company_name")
+        : Promise.resolve({ data: [], error: null }),
       inventoryQuery,
       incomingQuery,
-      requestItemsQuery,
+      requestQuery,
     ]);
 
-    if (productsResult.error) {
-      setError(productsResult.error.message);
-    } else {
-      setProducts((productsResult.data ?? []) as Product[]);
-    }
+    if (productsResult.error) setError(productsResult.error.message);
+    if (clientsResult.error) setError(clientsResult.error.message);
+    if (inventoryResult.error) setError(inventoryResult.error.message);
+    if (incomingResult.error) setError(incomingResult.error.message);
+    if (requestResult.error) setError(requestResult.error.message);
 
-    if (inventoryResult.error) {
-      setError(inventoryResult.error.message);
-    } else {
-      setInventoryRows((inventoryResult.data ?? []) as InventoryRow[]);
-    }
-
-    if (incomingResult.error) {
-      setError(incomingResult.error.message);
-    } else {
-      setIncomingLines((incomingResult.data ?? []) as IncomingProductLine[]);
-    }
-
-    if (requestItemsResult.error) {
-      setError(requestItemsResult.error.message);
-    } else {
-      setRequestLines((requestItemsResult.data ?? []) as RequestProductLine[]);
-    }
-
+    setProducts((productsResult.data ?? []) as Product[]);
+    setClients((clientsResult.data ?? []) as Client[]);
+    setInventoryHistory((inventoryResult.data ?? []) as ProductHistoryRow[]);
+    setIncomingHistory((incomingResult.data ?? []) as ProductHistoryRow[]);
+    setRequestHistory((requestResult.data ?? []) as ProductHistoryRow[]);
     setLoading(false);
-  }, [clientId, isClientPortal]);
+  }, [clientId, isAdmin, isClientPortal]);
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => void loadData(), 0);
+    let active = true;
 
-    return () => window.clearTimeout(timeout);
+    async function loadInitialData() {
+      await Promise.resolve();
+      if (active) {
+        await loadData();
+      }
+    }
+
+    void loadInitialData();
+
+    return () => {
+      active = false;
+    };
   }, [loadData]);
 
-  async function deleteProduct(product: Product) {
-    if (!window.confirm("Delete this product?")) {
-      return;
-    }
+  const historyProductIds = useMemo(() => {
+    return new Set([
+      ...inventoryHistory.map((row) => row.product_id),
+      ...incomingHistory.map((row) => row.product_id),
+      ...requestHistory.map((row) => row.product_id),
+    ]);
+  }, [incomingHistory, inventoryHistory, requestHistory]);
 
+  const filteredProducts = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+
+    return products
+      .filter((product) => {
+        const matchesSearch =
+          !normalized ||
+          product.product_name.toLowerCase().includes(normalized) ||
+          product.sku?.toLowerCase().includes(normalized) ||
+          product.asin?.toLowerCase().includes(normalized) ||
+          product.barcode?.toLowerCase().includes(normalized) ||
+          product.fnsku?.toLowerCase().includes(normalized);
+        const matchesStatus =
+          statusFilter === "all" ||
+          (statusFilter === "active" && product.active) ||
+          (statusFilter === "archived" && !product.active);
+        const matchesClient = !isAdmin || clientFilter === "all" || product.client_id === clientFilter;
+        const matchesDate = dateFilter === "all" || isWithinDateFilter(product.updated_at ?? product.created_at, dateFilter);
+
+        return matchesSearch && matchesStatus && matchesClient && matchesDate;
+      })
+      .sort(compareProductsForDisplay);
+  }, [clientFilter, dateFilter, isAdmin, products, query, statusFilter]);
+
+  const stats = useMemo(() => {
+    return {
+      total: products.length,
+      active: products.filter((product) => product.active).length,
+      archived: products.filter((product) => !product.active).length,
+    };
+  }, [products]);
+
+  async function handleArchiveDelete(product: Product) {
     setError(null);
     setSuccess(null);
-    const hasInventory = inventoryRows.some((row) => row.product_id === product.id);
-    const hasShipmentHistory = incomingLines.some((line) => line.product_id === product.id);
-    const hasRequestHistory = requestLines.some((line) => line.product_id === product.id);
 
-    if (hasInventory || hasShipmentHistory || hasRequestHistory) {
-      setError("This product has inventory or shipment history and cannot be deleted. Archive it instead.");
+    if (!product.active) {
+      const shouldRestore = window.confirm("Restore this product?");
+      if (!shouldRestore) return;
+
+      const { error: restoreError } = await supabase.from("products").update({ active: true }).eq("id", product.id);
+
+      if (restoreError) {
+        setError(restoreError.message);
+        return;
+      }
+
+      setSuccess("Product restored.");
+      await loadData();
       return;
     }
+
+    if (historyProductIds.has(product.id)) {
+      window.alert("This product has history and cannot be deleted.");
+      const shouldArchive = window.confirm("Archive this product instead?");
+      if (!shouldArchive) return;
+
+      const { error: archiveError } = await supabase.from("products").update({ active: false }).eq("id", product.id);
+
+      if (archiveError) {
+        setError(archiveError.message);
+        return;
+      }
+
+      setSuccess("Product archived.");
+      await loadData();
+      return;
+    }
+
+    const shouldDelete = window.confirm("Delete this product?");
+    if (!shouldDelete) return;
 
     const { error: deleteError } = await supabase
       .from("products")
@@ -210,599 +201,170 @@ export function ProductsClient() {
 
     if (deleteError) {
       setError(deleteError.message);
-    } else {
-      await loadData();
+      return;
     }
+
+    setSuccess("Product deleted.");
+    await loadData();
   }
 
-  async function archiveProduct(product: Product) {
-    const nextActive = !product.active;
-    const action = nextActive ? "restore" : "archive";
-
-    if (!window.confirm(`${nextActive ? "Restore" : "Archive"} this product?`)) {
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    const { error: archiveError } = await supabase
-      .from("products")
-      .update({ active: nextActive })
-      .eq("id", product.id);
-
-    if (archiveError) {
-      setError(archiveError.message);
-    } else {
-      await loadData();
-      if (action === "archive") {
-        setSuccess("Product archived. History remains available in existing records.");
-      }
-    }
-  }
-
-  async function moveProduct(product: Product, direction: "up" | "down") {
-    setError(null);
-    setSuccess(null);
-    const siblings = products
-      .filter((candidate) => candidate.client_id === product.client_id)
-      .sort(compareProductsForDisplay);
-    const currentIndex = siblings.findIndex((candidate) => candidate.id === product.id);
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length) {
-      return;
-    }
-
-    const reordered = [...siblings];
-    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
-
-    const updates = reordered.map((candidate, index) =>
-      supabase.from("products").update({ sort_order: index + 1 }).eq("id", candidate.id),
-    );
-    const results = await Promise.all(updates);
-    const failedUpdate = results.find((result) => result.error);
-
-    if (failedUpdate?.error) {
-      setError(failedUpdate.error.message);
-      return;
-    }
-
-    setProducts((currentProducts) =>
-      currentProducts
-        .map((candidate) => {
-          const nextIndex = reordered.findIndex((orderedProduct) => orderedProduct.id === candidate.id);
-          return nextIndex >= 0 ? { ...candidate, sort_order: nextIndex + 1 } : candidate;
-        })
-        .sort(compareProductsForDisplay),
-    );
-  }
-
-  const displayProducts = useMemo(() => {
-    const nextProducts = filteredProducts.filter((product) => {
-      const matchesStatus =
-        clientStatusFilter === "all" ||
-        (clientStatusFilter === "active" && product.active) ||
-        (clientStatusFilter === "inactive" && !product.active);
-
-      return matchesStatus;
-    });
-
-    return nextProducts.sort((first, second) =>
-      compareProducts(first, second, sortBy, sortDirection, inventoryRows),
-    );
-  }, [clientStatusFilter, filteredProducts, inventoryRows, sortBy, sortDirection]);
-
-  const clientProductStats = useMemo(() => {
-    return products.reduce(
-      (totals, product) => {
-        const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-
-        totals.totalProducts += 1;
-        if (product.active) totals.activeProducts += 1;
-        totals.totalInStock += summary.inStock;
-        totals.incomingUnits += summary.incomingUnits;
-
-        return totals;
-      },
-      { totalProducts: 0, activeProducts: 0, totalInStock: 0, incomingUnits: 0 },
-    );
-  }, [incomingLines, inventoryRows, products]);
-  const adminProductStats = useMemo(
-    () =>
-      products.reduce(
-        (totals, product) => {
-          const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-          totals.total += 1;
-          if (product.active) totals.active += 1;
-          totals.inStock += summary.inStock;
-          totals.incoming += summary.incomingUnits;
-          return totals;
-        },
-        { active: 0, incoming: 0, inStock: 0, total: 0 },
-      ),
-    [incomingLines, inventoryRows, products],
-  );
-
-  function openAdjustmentModal(product: Product) {
-    const inventoryRow = inventoryRows.find((row) => row.product_id === product.id) ?? null;
-
-    setAdjustmentProduct(product);
-    setInventoryDraft(inventoryRowToDraft(inventoryRow));
-    setAdjustmentReason("");
-    setAdjustmentNotes("");
-  }
-
-  async function saveInventoryAdjustment() {
-    if (!adjustmentProduct || adjusting) return;
-
-    const inventoryRow = inventoryRows.find((row) => row.product_id === adjustmentProduct.id) ?? null;
-    const nextValues = parseInventoryDraft(inventoryDraft);
-
-    if (!nextValues) {
-      setError("Inventory values must be whole numbers at or above zero.");
-      return;
-    }
-
-    if (!adjustmentReason.trim()) {
-      setError("Adjustment reason is required.");
-      return;
-    }
-
-    const changes = inventoryFields
-      .map((field) => ({
-        adjustmentType: field.key,
-        nextValue: nextValues[field.key],
-        previousValue: getInventoryValue(inventoryRow, field.key),
-      }))
-      .filter((change) => change.nextValue !== change.previousValue);
-
-    if (changes.length === 0) {
-      setError("Change at least one inventory value before saving.");
-      return;
-    }
-
-    setAdjusting(true);
-    setError(null);
-    setSuccess(null);
-
-    for (const change of changes) {
-      const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
-        p_product_id: adjustmentProduct.id,
-        p_client_id: adjustmentProduct.client_id,
-        p_adjustment_type: change.adjustmentType,
-        p_quantity: change.nextValue - change.previousValue,
-        p_reason: adjustmentReason.trim(),
-        p_notes: adjustmentNotes.trim() || null,
-      });
-
-      if (adjustmentError) {
-        setError(adjustmentError.message);
-        setAdjusting(false);
-        return;
-      }
-    }
-
-    try {
-      setAdjustmentProduct(null);
-      await loadData();
-      setSuccess("Inventory updated.");
-    } finally {
-      setAdjusting(false);
-    }
+  if (loading) {
+    return <LoadingState label="Loading products..." />;
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-950">Products</h1>
+          <p className="mt-1 text-sm text-slate-500">View and manage all your products.</p>
+        </div>
+        <Link
+          href="/products/new"
+          className="inline-flex h-9 items-center gap-2 rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
+        >
+          <PlusIcon />
+          Add Product
+        </Link>
+      </div>
+
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
 
-      <div className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Products</h2>
-            <p className="mt-1 text-sm text-slate-500">View and manage all your products.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/products/new"
-              className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
-            >
-              <span className="mr-2 text-base leading-none">+</span>
-              Add Product
-            </Link>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-            >
-              <UploadIcon />
-              Import
-            </button>
-          </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <ProductStat icon={<CatalogIcon />} label="Total Products" helper="Catalog records" value={stats.total} />
+        <ProductStat icon={<ActiveIcon />} label="Active Products" helper="Included in active selectors" value={stats.active} />
+        <ProductStat icon={<ArchiveIcon />} label="Archived Products" helper="Hidden from normal selectors" value={stats.archived} />
+      </div>
+
+      <Panel title="Product Catalog">
+        <div className={isAdmin ? "grid gap-3 lg:grid-cols-[12rem_minmax(0,1fr)_10rem_10rem]" : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]"}>
+          {isAdmin ? (
+            <select className={inputClassName} value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
+              <option value="all">All Clients</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.company_name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <label className="relative block">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+              <SearchIcon />
+            </span>
+            <input
+              className={`${inputClassName} pl-9`}
+              placeholder="Search by product name, SKU, ASIN or UPC"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <select className={inputClassName} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+            <option value="all">All Products</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+          </select>
+          {isAdmin ? (
+            <select className={inputClassName} value={dateFilter} onChange={(event) => setDateFilter(event.target.value as DateFilter)}>
+              <option value="all">All Dates</option>
+              <option value="today">Today</option>
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+              <option value="year">This Year</option>
+            </select>
+          ) : null}
         </div>
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ProductStat icon={<PackageIcon />} tone="blue" label="Total Products" value={isClientPortal ? clientProductStats.totalProducts : adminProductStats.total} sublabel={isClientPortal ? "All time" : "All clients"} />
-          <ProductStat icon={<ActiveBoxIcon />} tone="emerald" label="Active Products" value={isClientPortal ? clientProductStats.activeProducts : adminProductStats.active} sublabel="In stock or incoming" />
-          <ProductStat icon={<TruckIcon />} tone="orange" label="Total In Stock" value={isClientPortal ? clientProductStats.totalInStock : adminProductStats.inStock} sublabel="Units" />
-          <ProductStat icon={<DownloadIcon />} tone="violet" label="Incoming Units" value={isClientPortal ? clientProductStats.incomingUnits : adminProductStats.incoming} sublabel="Units on the way" />
-        </section>
-        <Panel title="Products">
-          <div className="mb-4 space-y-3">
-            <div className={isAdmin ? "grid gap-3 lg:grid-cols-[12rem_minmax(0,1fr)_10rem_11rem_9rem]" : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]"}>
-                {isAdmin ? (
-                  <select
-                    className={inputClassName}
-                    value={adminClientFilter}
-                    onChange={(event) => setAdminClientFilter(event.target.value)}
-                  >
-                    <option value="all">All Clients</option>
-                    {clientOptions.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                <div className="relative">
-                  <SearchIcon />
-                  <input
-                    className={`${inputClassName} pl-9`}
-                    placeholder="Search by product name, SKU, ASIN or UPC"
-                    value={productQuery}
-                    onChange={(event) => setProductQuery(event.target.value)}
-                  />
-                </div>
-                <select
-                  className={inputClassName}
-                  value={clientStatusFilter}
-                  onChange={(event) => setClientStatusFilter(event.target.value)}
-                >
-                  <option value="all">All Products</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Archived</option>
-                </select>
-                {isAdmin ? (
-                  <>
-                    <select
-                      className={inputClassName}
-                      value={sortBy}
-                      onChange={(event) => setSortBy(event.target.value as SortBy)}
-                    >
-                      <option value="manual">Manual order</option>
-                      <option value="stock">Stock quantity</option>
-                      <option value="updated">Date updated</option>
-                      <option value="customer">Customer</option>
-                      <option value="name">Product name</option>
-                    </select>
-                    <select
-                      className={inputClassName}
-                      value={sortDirection}
-                      onChange={(event) => setSortDirection(event.target.value as SortDirection)}
-                    >
-                      <option value="asc">Ascending</option>
-                      <option value="desc">Descending</option>
-                    </select>
-                  </>
-                ) : null}
-            </div>
-          </div>
-          {loading ? (
-            <LoadingState label="Loading products..." />
-          ) : displayProducts.length === 0 ? (
+
+        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+          <table className="w-full table-fixed text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="w-[7%] px-3 py-2 font-semibold">Image</th>
+                <th className="w-[31%] px-2 py-2 font-semibold">Product Name</th>
+                <th className="w-[11%] px-2 py-2 font-semibold">SKU</th>
+                <th className="w-[13%] px-2 py-2 font-semibold">ASIN / UPC</th>
+                <th className="w-[11%] px-2 py-2 font-semibold">FNSKU</th>
+                <th className="w-[9%] px-2 py-2 font-semibold">Status</th>
+                <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th>
+                <th className="w-[8%] px-2 py-2 text-right font-semibold">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {filteredProducts.map((product) => (
+                <tr key={product.id} className="transition hover:bg-slate-50">
+                  <td className="px-3 py-2.5">
+                    <ProductThumb product={product} />
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <p className="line-clamp-2 text-sm font-medium leading-5 text-slate-950">{product.product_name}</p>
+                    {isAdmin ? <p className="mt-0.5 truncate text-xs text-slate-500">{product.clients?.company_name ?? "Unknown client"}</p> : null}
+                  </td>
+                  <td className="px-2 py-2.5 text-xs text-slate-600">{product.sku ?? "-"}</td>
+                  <td className="px-2 py-2.5 text-xs text-slate-600">{formatAsinUpc(product)}</td>
+                  <td className="px-2 py-2.5 text-xs text-slate-600">{product.fnsku ?? "-"}</td>
+                  <td className="px-2 py-2.5">
+                    <StatusBadge tone={product.active ? "emerald" : "slate"}>{product.active ? "Active" : "Archived"}</StatusBadge>
+                  </td>
+                  <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td>
+                  <td className="px-2 py-2.5">
+                    <div className="flex justify-end gap-1">
+                      <Link
+                        href={`/products/${product.id}/edit`}
+                        className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                        title="Edit product"
+                        aria-label={`Edit ${product.product_name}`}
+                      >
+                        <PencilIcon />
+                      </Link>
+                      <button
+                        type="button"
+                        className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                        title={product.active && !historyProductIds.has(product.id) ? "Delete product" : product.active ? "Archive product" : "Restore product"}
+                        aria-label={product.active && !historyProductIds.has(product.id) ? `Delete ${product.product_name}` : product.active ? `Archive ${product.product_name}` : `Restore ${product.product_name}`}
+                        onClick={() => void handleArchiveDelete(product)}
+                      >
+                        {product.active && !historyProductIds.has(product.id) ? <TrashIcon /> : <ArchiveIcon />}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {filteredProducts.length === 0 ? (
+          <div className="mt-4">
             <EmptyState
               title="No products found"
-              body="Add a product or adjust the filters."
+              body="Add a catalog product or adjust the filters."
               action={
                 <Link
                   href="/products/new"
                   className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700"
                 >
-                  + Add Product
+                  Add Product
                 </Link>
               }
             />
-          ) : (
-            <div className="max-h-[44rem] overflow-auto rounded-md border border-slate-200">
-              <ProductsTable
-                products={displayProducts}
-                inventoryRows={inventoryRows}
-                incomingLines={incomingLines}
-                isClientPortal={isClientPortal}
-                onArchiveProduct={archiveProduct}
-                onDeleteProduct={deleteProduct}
-                onAdjustProduct={openAdjustmentModal}
-                onMoveProduct={moveProduct}
-              />
-            </div>
-          )}
-        </Panel>
-      </div>
-      {adjustmentProduct && isAdmin ? (
-        <InventoryAdjustmentModal
-          product={adjustmentProduct}
-          inventoryRow={inventoryRows.find((row) => row.product_id === adjustmentProduct.id) ?? null}
-          draft={inventoryDraft}
-          reason={adjustmentReason}
-          notes={adjustmentNotes}
-          saving={adjusting}
-          onClose={() => setAdjustmentProduct(null)}
-          onDraftChange={setInventoryDraft}
-          onNotesChange={setAdjustmentNotes}
-          onReasonChange={setAdjustmentReason}
-          onSave={saveInventoryAdjustment}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function ProductsTable({
-  products,
-  inventoryRows,
-  incomingLines,
-  isClientPortal,
-  onArchiveProduct,
-  onAdjustProduct,
-  onDeleteProduct,
-  onMoveProduct,
-}: {
-  products: Product[];
-  inventoryRows: InventoryRow[];
-  incomingLines: IncomingProductLine[];
-  isClientPortal: boolean;
-  onArchiveProduct: (product: Product) => Promise<void>;
-  onAdjustProduct: (product: Product) => void;
-  onDeleteProduct: (product: Product) => Promise<void>;
-  onMoveProduct: (product: Product, direction: "up" | "down") => Promise<void>;
-}) {
-  return (
-    <table className="w-full min-w-[1040px] table-fixed text-left text-sm tabular-nums">
-      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
-        <tr>
-          <th className="w-[16rem] px-2.5 py-2.5 font-semibold">Product</th>
-          <th className="w-24 px-2.5 py-2.5 font-semibold">SKU <SortMark /></th>
-          <th className="w-28 px-2.5 py-2.5 font-semibold">ASIN / UPC <SortMark /></th>
-          <th className="w-24 px-2.5 py-2.5 font-semibold">FNSKU <SortMark /></th>
-          <th className="w-20 px-2 py-2.5 text-center font-semibold">In Stock <SortMark /></th>
-          <th className="w-20 px-2 py-2.5 text-center font-semibold">Incoming <SortMark /></th>
-          <th className="w-20 px-2 py-2.5 text-center font-semibold">Reserved <SortMark /></th>
-          <th className="w-24 px-2.5 py-2.5 font-semibold">Last Updated <SortMark /></th>
-          <th className="w-44 px-2.5 py-2.5 text-right font-semibold">Actions</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-100">
-        {products.map((product) => {
-          const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-
-          return (
-            <tr key={product.id} className="cursor-pointer bg-white transition hover:bg-slate-50/80">
-              <td className="px-2.5 py-2.5 font-medium text-slate-950">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <ProductThumb product={product} />
-                  <div className="min-w-0">
-                    <p className="line-clamp-2 whitespace-normal break-words font-medium leading-snug text-slate-950">{product.product_name}</p>
-                    {!isClientPortal && product.clients ? (
-                      <p className="mt-0.5 truncate text-xs text-slate-500">{product.clients.company_name}</p>
-                    ) : null}
-                  </div>
-                </div>
-              </td>
-              <td className="truncate px-2.5 py-2 text-slate-600">{product.sku ?? "-"}</td>
-              <td className="truncate px-2.5 py-2 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
-              <td className="truncate px-2.5 py-2 text-slate-600">{product.fnsku ?? "-"}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.inStock)}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.incomingUnits)}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-center text-slate-700">{formatNumber(summary.reservedUnits)}</td>
-              <td className="whitespace-nowrap px-2.5 py-2 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
-              <td className="px-2.5 py-2">
-                <div className="flex justify-end gap-0.5">
-                  <button
-                    type="button"
-                    aria-label={`Move ${product.product_name} up`}
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-                    onClick={() => void onMoveProduct(product, "up")}
-                  >
-                    <ArrowUpIcon />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move ${product.product_name} down`}
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-                    onClick={() => void onMoveProduct(product, "down")}
-                  >
-                    <ArrowDownIcon />
-                  </button>
-                  {!isClientPortal ? (
-                    <button
-                      type="button"
-                      aria-label={`Edit Stock for ${product.product_name}`}
-                      title="Edit Stock"
-                      className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-blue-50 hover:text-blue-700"
-                      onClick={() => onAdjustProduct(product)}
-                    >
-                      <InventoryEditIcon />
-                    </button>
-                  ) : null}
-                  <Link
-                    href={`/products/${product.id}/edit`}
-                    aria-label={`Edit ${product.product_name}`}
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-                  >
-                    <PencilIcon />
-                  </Link>
-                  <button
-                    type="button"
-                    aria-label={`${product.active ? "Archive" : "Restore"} ${product.product_name}`}
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-                    onClick={() => void onArchiveProduct(product)}
-                  >
-                    <ArchiveIcon archived={!product.active} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${product.product_name}`}
-                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
-                    onClick={() => void onDeleteProduct(product)}
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-function SuccessBanner({ message }: { message: string | null }) {
-  if (!message) {
-    return null;
-  }
-
-  return (
-    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-      {message}
-    </div>
-  );
-}
-
-function InventoryAdjustmentModal({
-  product,
-  inventoryRow,
-  draft,
-  reason,
-  notes,
-  saving,
-  onClose,
-  onDraftChange,
-  onNotesChange,
-  onReasonChange,
-  onSave,
-}: {
-  product: Product;
-  inventoryRow: InventoryRow | null;
-  draft: InventoryDraft;
-  reason: string;
-  notes: string;
-  saving: boolean;
-  onClose: () => void;
-  onDraftChange: (value: InventoryDraft) => void;
-  onNotesChange: (value: string) => void;
-  onReasonChange: (value: string) => void;
-  onSave: () => Promise<void>;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
-      <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-950">Edit Inventory</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            {product.product_name}
-            {product.clients ? ` · ${product.clients.company_name}` : ""}
-          </p>
-        </div>
-        <div className="space-y-4 px-5 py-4">
-          <div className="grid gap-2 sm:grid-cols-5">
-            {inventoryFields.map((field) => (
-              <div key={field.key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{field.label}</p>
-                <p className="mt-1 text-lg font-semibold tabular-nums text-slate-950">
-                  {formatNumber(getInventoryValue(inventoryRow, field.key))}
-                </p>
-              </div>
-            ))}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {inventoryFields.map((field) => (
-              <label key={field.key} className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{field.inputLabel}</span>
-                <input
-                  className={inputClassName}
-                  inputMode="numeric"
-                  min={0}
-                  type="number"
-                  value={draft[field.key]}
-                  onChange={(event) =>
-                    onDraftChange({
-                      ...draft,
-                      [field.key]: event.target.value,
-                    })
-                  }
-                />
-            </label>
-            ))}
-          </div>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason / Note</span>
-            <input
-              className={inputClassName}
-              placeholder="Manual recount"
-              value={reason}
-              onChange={(event) => onReasonChange(event.target.value)}
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes optional</span>
-            <textarea
-              className={textAreaClassName}
-              value={notes}
-              onChange={(event) => onNotesChange(event.target.value)}
-            />
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            onClick={onClose}
-            disabled={saving}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-            onClick={() => void onSave()}
-            disabled={saving}
-          >
-            {saving ? "Saving..." : "Save inventory"}
-          </button>
-        </div>
-      </div>
+        ) : null}
+      </Panel>
     </div>
   );
 }
 
-function ProductStat({
-  icon,
-  tone,
-  label,
-  value,
-  sublabel,
-}: {
-  icon: ReactNode;
-  tone: "blue" | "emerald" | "orange" | "violet";
-  label: string;
-  value: number;
-  sublabel: string;
-}) {
-  const toneClass = {
-    blue: "bg-blue-50 text-blue-600",
-    emerald: "bg-emerald-50 text-emerald-600",
-    orange: "bg-orange-50 text-orange-600",
-    violet: "bg-violet-50 text-violet-600",
-  }[tone];
-
+function ProductStat({ helper, icon, label, value }: { helper: string; icon: ReactNode; label: string; value: number }) {
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <span className={`flex size-12 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
-        {icon}
-      </span>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{formatNumber(value)}</p>
-        <p className="mt-0.5 text-xs text-slate-500">{sublabel}</p>
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums text-slate-950">{formatNumber(value)}</p>
+          <p className="mt-1 text-xs text-slate-500">{helper}</p>
+        </div>
+        <span className="inline-flex size-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">{icon}</span>
       </div>
     </div>
   );
@@ -812,278 +374,140 @@ function ProductThumb({ product }: { product: Product }) {
   if (product.photo_url) {
     return (
       <span
-        className="block size-9 shrink-0 rounded-md border border-slate-200 bg-cover bg-center bg-slate-100"
+        className="block size-10 shrink-0 rounded-md border border-slate-200 bg-slate-100 bg-cover bg-center"
         style={{ backgroundImage: `url("${product.photo_url}")` }}
       />
     );
   }
 
   return (
-    <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
-      <PackageIcon />
+    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-400">
+      {(product.product_name || "P").slice(0, 2).toUpperCase()}
     </span>
   );
 }
 
-function getClientProductSummary(
-  product: Product,
-  inventoryRows: InventoryRow[],
-  incomingLines: IncomingProductLine[],
-) {
-  const productInventory = inventoryRows.filter((row) => row.product_id === product.id);
-  const productIncoming = incomingLines.filter((line) => line.product_id === product.id);
-  const availableQty = productInventory.reduce((sum, row) => sum + row.available_qty, 0);
-  const reservedQty = productInventory.reduce((sum, row) => sum + row.reserved_qty, 0);
-  const incomingQty = productIncoming
-    .filter((line) => !line.inventory_posted_at)
-    .reduce((sum, line) => sum + line.expected_quantity, 0);
-  const lastUpdated = productInventory
-    .map((row) => row.updated_at)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
+function SuccessBanner({ message }: { message: string | null }) {
+  if (!message) return null;
 
-  return {
-    incomingUnits: incomingQty,
-    inStock: availableQty,
-    lastUpdated,
-    reservedUnits: reservedQty,
-  };
+  return (
+    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+      {message}
+    </div>
+  );
 }
 
-function emptyInventoryDraft(): InventoryDraft {
-  return {
-    available_qty: "0",
-    expected_qty: "0",
-    received_qty: "0",
-    reserved_qty: "0",
-    storage_boxes: "0",
-  };
+function compareProductsForDisplay(left: Product, right: Product) {
+  const orderDifference = (left.sort_order ?? 0) - (right.sort_order ?? 0);
+  if (orderDifference !== 0) return orderDifference;
+
+  return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
 }
 
-function inventoryRowToDraft(inventoryRow: InventoryRow | null): InventoryDraft {
-  return {
-    available_qty: String(inventoryRow?.available_qty ?? 0),
-    expected_qty: String(inventoryRow?.expected_qty ?? 0),
-    received_qty: String(inventoryRow?.received_qty ?? 0),
-    reserved_qty: String(inventoryRow?.reserved_qty ?? 0),
-    storage_boxes: String(inventoryRow?.storage_boxes ?? 0),
-  };
-}
+function isWithinDateFilter(value: string, filter: DateFilter) {
+  const date = new Date(value);
+  const now = new Date();
 
-function parseInventoryDraft(draft: InventoryDraft): Record<AdjustmentType, number> | null {
-  const parsed = {} as Record<AdjustmentType, number>;
-
-  for (const field of inventoryFields) {
-    const value = Number(draft[field.key]);
-
-    if (!Number.isInteger(value) || value < 0) {
-      return null;
-    }
-
-    parsed[field.key] = value;
+  if (filter === "today") {
+    return date.toDateString() === now.toDateString();
   }
 
-  return parsed;
+  if (filter === "week") {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 7);
+    return date >= start;
+  }
+
+  if (filter === "month") {
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  }
+
+  if (filter === "year") {
+    return date.getFullYear() === now.getFullYear();
+  }
+
+  return true;
 }
 
-function getInventoryValue(inventoryRow: InventoryRow | null, key: AdjustmentType) {
-  return inventoryRow?.[key] ?? 0;
+function formatAsinUpc(product: Product) {
+  const values = [product.asin, product.barcode].filter(Boolean);
+  return values.length > 0 ? values.join(" / ") : "-";
+}
+
+function formatCompactDate(value: string) {
+  const date = new Date(value);
+
+  return (
+    <>
+      {new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date)}
+      <br />
+      {new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(date)}
+    </>
+  );
 }
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en").format(value);
 }
 
-function compareProductsForDisplay(first: Product, second: Product) {
-  const orderDifference = first.sort_order - second.sort_order;
-
-  if (orderDifference !== 0) {
-    return orderDifference;
-  }
-
-  return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
-}
-
-function compareProducts(
-  first: Product,
-  second: Product,
-  sortBy: SortBy,
-  sortDirection: SortDirection,
-  inventoryRows: InventoryRow[],
-) {
-  const direction = sortDirection === "asc" ? 1 : -1;
-  let comparison = 0;
-
-  if (sortBy === "stock") {
-    comparison = getProductAvailableStock(first, inventoryRows) - getProductAvailableStock(second, inventoryRows);
-  } else if (sortBy === "updated") {
-    comparison = getProductUpdatedAt(first, inventoryRows).getTime() - getProductUpdatedAt(second, inventoryRows).getTime();
-  } else if (sortBy === "customer") {
-    comparison = (first.clients?.company_name ?? "").localeCompare(second.clients?.company_name ?? "");
-  } else if (sortBy === "name") {
-    comparison = first.product_name.localeCompare(second.product_name);
-  } else {
-    comparison = compareProductsForDisplay(first, second);
-  }
-
-  return comparison === 0 ? compareProductsForDisplay(first, second) : comparison * direction;
-}
-
-function getProductAvailableStock(product: Product, inventoryRows: InventoryRow[]) {
-  return inventoryRows
-    .filter((row) => row.product_id === product.id)
-    .reduce((sum, row) => sum + row.available_qty, 0);
-}
-
-function getProductUpdatedAt(product: Product, inventoryRows: InventoryRow[]) {
-  const inventoryUpdatedAt = inventoryRows
-    .filter((row) => row.product_id === product.id)
-    .map((row) => row.updated_at)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
-
-  return new Date(inventoryUpdatedAt ?? product.updated_at);
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  const day = new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "numeric",
-  }).format(date);
-  const time = new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-
+function PlusIcon() {
   return (
-    <span className="leading-tight">
-      <span className="block">{day}</span>
-      <span className="block text-xs text-slate-500">{time}</span>
-    </span>
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
   );
-}
-
-function SortMark() {
-  return <span className="ml-1 text-slate-300">↕</span>;
 }
 
 function SearchIcon() {
   return (
-    <svg className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-3.5-3.5" />
-    </svg>
-  );
-}
-
-function PackageIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m21 16-9 5-9-5V8l9-5 9 5v8Z" />
-      <path d="m3.5 8.5 8.5 5 8.5-5" />
-      <path d="M12 13.5V21" />
-    </svg>
-  );
-}
-
-function ActiveBoxIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m21 16-9 5-9-5V8l9-5 9 5v8Z" />
-      <path d="m8 12 2.5 2.5L16 9" />
-    </svg>
-  );
-}
-
-function TruckIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 7h11v10H3z" />
-      <path d="M14 10h4l3 3v4h-7z" />
-      <circle cx="7" cy="18" r="2" />
-      <circle cx="18" cy="18" r="2" />
-    </svg>
-  );
-}
-
-function DownloadIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 3v12" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M5 21h14" />
-    </svg>
-  );
-}
-
-function UploadIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 21V9" />
-      <path d="m7 14 5-5 5 5" />
-      <path d="M5 5h14" />
-    </svg>
-  );
-}
-
-function ArrowUpIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m6 15 6-6 6 6" />
-    </svg>
-  );
-}
-
-function ArrowDownIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="m6 9 6 6 6-6" />
+      <path d="m20 20-3.5-3.5" strokeLinecap="round" />
     </svg>
   );
 }
 
 function PencilIcon() {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 20h9" />
-      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
-    </svg>
-  );
-}
-
-function InventoryEditIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 7h16" />
-      <path d="M4 17h16" />
-      <circle cx="8" cy="7" r="2" />
-      <circle cx="16" cy="17" r="2" />
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" strokeLinecap="round" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function TrashIcon() {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v5" />
-      <path d="M14 11v5" />
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18" strokeLinecap="round" />
+      <path d="M8 6V4h8v2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 11v5M14 11v5" strokeLinecap="round" />
     </svg>
   );
 }
 
-function ArchiveIcon({ archived }: { archived: boolean }) {
+function ArchiveIcon() {
   return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 7h16" />
-      <path d="M6 7v13h12V7" />
-      <path d="M9 11h6" />
-      {archived ? <path d="m9 16 3-3 3 3" /> : <path d="m9 14 3 3 3-3" />}
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 7h16v13H4z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 7 6 3h12l2 4M9 12h6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CatalogIcon() {
+  return (
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 6h16M4 12h16M4 18h10" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ActiveIcon() {
+  return (
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m5 12 4 4L19 6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
