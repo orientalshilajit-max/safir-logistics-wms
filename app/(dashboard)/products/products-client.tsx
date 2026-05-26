@@ -49,6 +49,7 @@ type RequestProductLine = Pick<Tables<"request_items">, "product_id">;
 type SortBy = "manual" | "stock" | "updated" | "customer" | "name";
 type SortDirection = "asc" | "desc";
 type AdjustmentType = "received_qty" | "expected_qty" | "reserved_qty" | "available_qty" | "storage_boxes";
+type InventoryDraft = Record<AdjustmentType, string>;
 
 const adjustmentLabels: Record<AdjustmentType, string> = {
   received_qty: "In Stock",
@@ -57,6 +58,14 @@ const adjustmentLabels: Record<AdjustmentType, string> = {
   available_qty: "Available",
   storage_boxes: "Storage Boxes",
 };
+
+const inventoryFields: Array<{ key: AdjustmentType; label: string; inputLabel: string }> = [
+  { key: "received_qty", label: adjustmentLabels.received_qty, inputLabel: "in_stock_units" },
+  { key: "expected_qty", label: adjustmentLabels.expected_qty, inputLabel: "incoming_units" },
+  { key: "reserved_qty", label: adjustmentLabels.reserved_qty, inputLabel: "reserved_units" },
+  { key: "available_qty", label: adjustmentLabels.available_qty, inputLabel: "available_units" },
+  { key: "storage_boxes", label: adjustmentLabels.storage_boxes, inputLabel: "storage_boxes" },
+];
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
@@ -70,13 +79,13 @@ export function ProductsClient() {
   const [sortBy, setSortBy] = useState<SortBy>("manual");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [adjustmentProduct, setAdjustmentProduct] = useState<Product | null>(null);
-  const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>("available_qty");
-  const [adjustmentQuantity, setAdjustmentQuantity] = useState("");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [inventoryDraft, setInventoryDraft] = useState<InventoryDraft>(emptyInventoryDraft());
   const [adjusting, setAdjusting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const isClientPortal = role === "client";
   const isAdmin = role === "admin";
 
@@ -184,6 +193,7 @@ export function ProductsClient() {
     }
 
     setError(null);
+    setSuccess(null);
     const hasInventory = inventoryRows.some((row) => row.product_id === product.id);
     const hasShipmentHistory = incomingLines.some((line) => line.product_id === product.id);
     const hasRequestHistory = requestLines.some((line) => line.product_id === product.id);
@@ -214,6 +224,7 @@ export function ProductsClient() {
     }
 
     setError(null);
+    setSuccess(null);
     const { error: archiveError } = await supabase
       .from("products")
       .update({ active: nextActive })
@@ -224,13 +235,14 @@ export function ProductsClient() {
     } else {
       await loadData();
       if (action === "archive") {
-        setError("Product archived. History remains available in existing records.");
+        setSuccess("Product archived. History remains available in existing records.");
       }
     }
   }
 
   async function moveProduct(product: Product, direction: "up" | "down") {
     setError(null);
+    setSuccess(null);
     const siblings = products
       .filter((candidate) => candidate.client_id === product.client_id)
       .sort(compareProductsForDisplay);
@@ -312,9 +324,10 @@ export function ProductsClient() {
   );
 
   function openAdjustmentModal(product: Product) {
+    const inventoryRow = inventoryRows.find((row) => row.product_id === product.id) ?? null;
+
     setAdjustmentProduct(product);
-    setAdjustmentType("available_qty");
-    setAdjustmentQuantity("");
+    setInventoryDraft(inventoryRowToDraft(inventoryRow));
     setAdjustmentReason("");
     setAdjustmentNotes("");
   }
@@ -322,10 +335,11 @@ export function ProductsClient() {
   async function saveInventoryAdjustment() {
     if (!adjustmentProduct || adjusting) return;
 
-    const quantity = Number(adjustmentQuantity);
+    const inventoryRow = inventoryRows.find((row) => row.product_id === adjustmentProduct.id) ?? null;
+    const nextValues = parseInventoryDraft(inventoryDraft);
 
-    if (!Number.isInteger(quantity) || quantity === 0) {
-      setError("Adjustment quantity must be a non-zero whole number.");
+    if (!nextValues) {
+      setError("Inventory values must be whole numbers at or above zero.");
       return;
     }
 
@@ -334,30 +348,53 @@ export function ProductsClient() {
       return;
     }
 
-    setAdjusting(true);
-    setError(null);
-    const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
-      p_product_id: adjustmentProduct.id,
-      p_client_id: adjustmentProduct.client_id,
-      p_adjustment_type: adjustmentType,
-      p_quantity: quantity,
-      p_reason: adjustmentReason.trim(),
-      p_notes: adjustmentNotes.trim() || null,
-    });
+    const changes = inventoryFields
+      .map((field) => ({
+        adjustmentType: field.key,
+        nextValue: nextValues[field.key],
+        previousValue: getInventoryValue(inventoryRow, field.key),
+      }))
+      .filter((change) => change.nextValue !== change.previousValue);
 
-    if (adjustmentError) {
-      setError(adjustmentError.message);
-    } else {
-      setAdjustmentProduct(null);
-      await loadData();
+    if (changes.length === 0) {
+      setError("Change at least one inventory value before saving.");
+      return;
     }
 
-    setAdjusting(false);
+    setAdjusting(true);
+    setError(null);
+    setSuccess(null);
+
+    for (const change of changes) {
+      const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
+        p_product_id: adjustmentProduct.id,
+        p_client_id: adjustmentProduct.client_id,
+        p_adjustment_type: change.adjustmentType,
+        p_quantity: change.nextValue - change.previousValue,
+        p_reason: adjustmentReason.trim(),
+        p_notes: adjustmentNotes.trim() || null,
+      });
+
+      if (adjustmentError) {
+        setError(adjustmentError.message);
+        setAdjusting(false);
+        return;
+      }
+    }
+
+    try {
+      setAdjustmentProduct(null);
+      await loadData();
+      setSuccess("Inventory updated.");
+    } finally {
+      setAdjusting(false);
+    }
   }
 
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
 
       <div className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -483,15 +520,13 @@ export function ProductsClient() {
         <InventoryAdjustmentModal
           product={adjustmentProduct}
           inventoryRow={inventoryRows.find((row) => row.product_id === adjustmentProduct.id) ?? null}
-          adjustmentType={adjustmentType}
-          quantity={adjustmentQuantity}
+          draft={inventoryDraft}
           reason={adjustmentReason}
           notes={adjustmentNotes}
           saving={adjusting}
-          onAdjustmentTypeChange={setAdjustmentType}
           onClose={() => setAdjustmentProduct(null)}
+          onDraftChange={setInventoryDraft}
           onNotesChange={setAdjustmentNotes}
-          onQuantityChange={setAdjustmentQuantity}
           onReasonChange={setAdjustmentReason}
           onSave={saveInventoryAdjustment}
         />
@@ -579,7 +614,8 @@ function ProductsTable({
                   {!isClientPortal ? (
                     <button
                       type="button"
-                      aria-label={`Adjust inventory for ${product.product_name}`}
+                      aria-label={`Edit Stock for ${product.product_name}`}
+                      title="Edit Stock"
                       className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => onAdjustProduct(product)}
                     >
@@ -619,48 +655,48 @@ function ProductsTable({
   );
 }
 
+function SuccessBanner({ message }: { message: string | null }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+      {message}
+    </div>
+  );
+}
+
 function InventoryAdjustmentModal({
   product,
   inventoryRow,
-  adjustmentType,
-  quantity,
+  draft,
   reason,
   notes,
   saving,
-  onAdjustmentTypeChange,
   onClose,
+  onDraftChange,
   onNotesChange,
-  onQuantityChange,
   onReasonChange,
   onSave,
 }: {
   product: Product;
   inventoryRow: InventoryRow | null;
-  adjustmentType: AdjustmentType;
-  quantity: string;
+  draft: InventoryDraft;
   reason: string;
   notes: string;
   saving: boolean;
-  onAdjustmentTypeChange: (value: AdjustmentType) => void;
   onClose: () => void;
+  onDraftChange: (value: InventoryDraft) => void;
   onNotesChange: (value: string) => void;
-  onQuantityChange: (value: string) => void;
   onReasonChange: (value: string) => void;
   onSave: () => Promise<void>;
 }) {
-  const currentValues: Record<AdjustmentType, number> = {
-    available_qty: inventoryRow?.available_qty ?? 0,
-    expected_qty: inventoryRow?.expected_qty ?? 0,
-    received_qty: inventoryRow?.received_qty ?? 0,
-    reserved_qty: inventoryRow?.reserved_qty ?? 0,
-    storage_boxes: inventoryRow?.storage_boxes ?? 0,
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
       <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-950">Adjust inventory</h3>
+          <h3 className="text-base font-semibold text-slate-950">Edit Inventory</h3>
           <p className="mt-1 text-sm text-slate-500">
             {product.product_name}
             {product.clients ? ` · ${product.clients.company_name}` : ""}
@@ -668,47 +704,40 @@ function InventoryAdjustmentModal({
         </div>
         <div className="space-y-4 px-5 py-4">
           <div className="grid gap-2 sm:grid-cols-5">
-            {Object.entries(adjustmentLabels).map(([key, label]) => (
-              <div key={key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+            {inventoryFields.map((field) => (
+              <div key={field.key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{field.label}</p>
                 <p className="mt-1 text-lg font-semibold tabular-nums text-slate-950">
-                  {formatNumber(currentValues[key as AdjustmentType])}
+                  {formatNumber(getInventoryValue(inventoryRow, field.key))}
                 </p>
               </div>
             ))}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjustment type</span>
-              <select
-                className={inputClassName}
-                value={adjustmentType}
-                onChange={(event) => onAdjustmentTypeChange(event.target.value as AdjustmentType)}
-              >
-                {Object.entries(adjustmentLabels).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+            {inventoryFields.map((field) => (
+              <label key={field.key} className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{field.inputLabel}</span>
+                <input
+                  className={inputClassName}
+                  inputMode="numeric"
+                  min={0}
+                  type="number"
+                  value={draft[field.key]}
+                  onChange={(event) =>
+                    onDraftChange({
+                      ...draft,
+                      [field.key]: event.target.value,
+                    })
+                  }
+                />
             </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quantity adjustment</span>
-              <input
-                className={inputClassName}
-                inputMode="numeric"
-                placeholder="+50 or -12"
-                type="number"
-                value={quantity}
-                onChange={(event) => onQuantityChange(event.target.value)}
-              />
-            </label>
+            ))}
           </div>
           <label className="block space-y-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason / Note</span>
             <input
               className={inputClassName}
-              placeholder="Inventory recount"
+              placeholder="Manual recount"
               value={reason}
               onChange={(event) => onReasonChange(event.target.value)}
             />
@@ -737,7 +766,7 @@ function InventoryAdjustmentModal({
             onClick={() => void onSave()}
             disabled={saving}
           >
-            {saving ? "Saving..." : "Save adjustment"}
+            {saving ? "Saving..." : "Save inventory"}
           </button>
         </div>
       </div>
@@ -820,6 +849,46 @@ function getClientProductSummary(
     lastUpdated,
     reservedUnits: reservedQty,
   };
+}
+
+function emptyInventoryDraft(): InventoryDraft {
+  return {
+    available_qty: "0",
+    expected_qty: "0",
+    received_qty: "0",
+    reserved_qty: "0",
+    storage_boxes: "0",
+  };
+}
+
+function inventoryRowToDraft(inventoryRow: InventoryRow | null): InventoryDraft {
+  return {
+    available_qty: String(inventoryRow?.available_qty ?? 0),
+    expected_qty: String(inventoryRow?.expected_qty ?? 0),
+    received_qty: String(inventoryRow?.received_qty ?? 0),
+    reserved_qty: String(inventoryRow?.reserved_qty ?? 0),
+    storage_boxes: String(inventoryRow?.storage_boxes ?? 0),
+  };
+}
+
+function parseInventoryDraft(draft: InventoryDraft): Record<AdjustmentType, number> | null {
+  const parsed = {} as Record<AdjustmentType, number>;
+
+  for (const field of inventoryFields) {
+    const value = Number(draft[field.key]);
+
+    if (!Number.isInteger(value) || value < 0) {
+      return null;
+    }
+
+    parsed[field.key] = value;
+  }
+
+  return parsed;
+}
+
+function getInventoryValue(inventoryRow: InventoryRow | null, key: AdjustmentType) {
+  return inventoryRow?.[key] ?? 0;
 }
 
 function formatNumber(value: number) {
