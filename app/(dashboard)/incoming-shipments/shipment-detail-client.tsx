@@ -30,6 +30,7 @@ type Shipment = Tables<"incoming_shipments"> & {
   statuses: Status | null;
 };
 type ItemDraft = {
+  boxes: string;
   damaged: string;
   missing: string;
   notes: string;
@@ -44,7 +45,6 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
   const [issueMode, setIssueMode] = useState<Record<string, boolean>>({});
-  const [actualBoxes, setActualBoxes] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +93,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
               damaged: String(item.damaged_quantity),
               missing: String(item.missing_quantity),
               notes: item.notes ?? "",
+              boxes: String(item.received_boxes ?? item.expected_boxes),
               received: String(received),
             },
           ];
@@ -104,13 +105,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         sortedItems.map((item) => [
           item.id,
           hasItemIssue(item) ||
-            (loadedShipment.actual_received_boxes !== null &&
-              loadedShipment.actual_received_boxes !== loadedShipment.number_of_boxes),
+            (item.received_boxes !== null &&
+              item.received_boxes !== item.expected_boxes),
         ]),
       ),
-    );
-    setActualBoxes(
-      String(loadedShipment.actual_received_boxes ?? loadedShipment.number_of_boxes),
     );
 
     const { data: statusData, error: statusError } = await supabase
@@ -141,6 +139,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     return {
       expected: items.reduce((sum, item) => sum + item.expected_quantity, 0),
       received: items.reduce((sum, item) => sum + (item.received_quantity || item.expected_quantity), 0),
+      boxes: items.reduce((sum, item) => sum + item.expected_boxes, 0),
       posted: items.filter((item) => item.inventory_posted_at).length,
       rows: items.length,
     };
@@ -223,7 +222,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   async function saveRow(item: ShipmentItem) {
     if (!shipment || !isAdmin || savingId || item.inventory_posted_at) return false;
 
-    const parsed = parseDraft(item, drafts[item.id], actualBoxes, shipment.number_of_boxes);
+    const parsed = parseDraft(item, drafts[item.id]);
 
     if (parsed.error) {
       setError(parsed.error);
@@ -236,7 +235,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
 
     const { error: shipmentError } = await supabase
       .from("incoming_shipments")
-      .update({ actual_received_boxes: parsed.actualBoxes })
+      .update({ actual_received_boxes: shipment.incoming_items.reduce((sum, row) => {
+        if (row.id === item.id) return sum + parsed.boxes;
+        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : row.received_boxes ?? row.expected_boxes);
+      }, 0) })
       .eq("id", shipment.id);
 
     if (shipmentError) {
@@ -251,6 +253,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         damaged_quantity: parsed.damaged,
         missing_quantity: parsed.missing,
         notes: parsed.notes,
+        received_boxes: parsed.boxes,
         received_quantity: parsed.received,
       })
       .eq("id", item.id)
@@ -272,7 +275,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   async function confirmReceived(item: ShipmentItem) {
     if (!shipment || !isAdmin || savingId || item.inventory_posted_at) return;
 
-    const parsed = parseDraft(item, drafts[item.id], actualBoxes, shipment.number_of_boxes);
+    const parsed = parseDraft(item, drafts[item.id]);
 
     if (parsed.error) {
       setError(parsed.error);
@@ -283,7 +286,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       parsed.received !== item.expected_quantity ||
       parsed.damaged > 0 ||
       parsed.missing > 0 ||
-      parsed.actualBoxes !== shipment.number_of_boxes ||
+      parsed.boxes !== item.expected_boxes ||
       item.is_unexpected;
 
     if (hasDiscrepancy && !window.confirm("This row has an issue. Post actual quantities to inventory?")) {
@@ -296,7 +299,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
 
     const { error: shipmentError } = await supabase
       .from("incoming_shipments")
-      .update({ actual_received_boxes: parsed.actualBoxes })
+      .update({ actual_received_boxes: shipment.incoming_items.reduce((sum, row) => {
+        if (row.id === item.id) return sum + parsed.boxes;
+        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : row.received_boxes ?? row.expected_boxes);
+      }, 0) })
       .eq("id", shipment.id);
 
     if (shipmentError) {
@@ -311,6 +317,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         damaged_quantity: parsed.damaged,
         missing_quantity: parsed.missing,
         notes: parsed.notes,
+        received_boxes: parsed.boxes,
         received_quantity: parsed.received,
       })
       .eq("id", item.id)
@@ -397,7 +404,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       <div className="grid gap-4 md:grid-cols-4">
         <Summary label="Expected Qty" value={totals.expected} />
         <Summary label="Rows Posted" value={`${totals.posted}/${totals.rows}`} />
-        <Summary label="Boxes" value={shipment.actual_received_boxes ?? shipment.number_of_boxes} />
+        <Summary label="Boxes" value={shipment.actual_received_boxes ?? totals.boxes} />
         <Summary label="Status" value={shipment.statuses?.name ?? "In Transit"} />
       </div>
 
@@ -429,13 +436,13 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
               <tbody className="divide-y divide-slate-100">
                 {shipment.incoming_items.map((item) => {
                   const draft = drafts[item.id];
-                  const parsed = parseDraft(item, draft, actualBoxes, shipment.number_of_boxes);
+                  const parsed = parseDraft(item, draft);
                   const rowIssue =
                     Boolean(parsed.error) ||
                     parsed.received !== item.expected_quantity ||
                     parsed.damaged > 0 ||
                     parsed.missing > 0 ||
-                    parsed.actualBoxes !== shipment.number_of_boxes ||
+                    parsed.boxes !== item.expected_boxes ||
                     item.is_unexpected;
                   const showIssueFields = issueMode[item.id] || rowIssue;
 
@@ -506,11 +513,16 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                             className={`${inputClassName} w-28`}
                             min="0"
                             type="number"
-                            value={actualBoxes}
-                            onChange={(event) => setActualBoxes(event.target.value)}
+                            value={draft?.boxes ?? String(item.expected_boxes)}
+                            onChange={(event) =>
+                              setDrafts((current) => ({
+                                ...current,
+                                [item.id]: { ...current[item.id], boxes: event.target.value },
+                              }))
+                            }
                           />
                         ) : (
-                          <span className="text-slate-600">{shipment.actual_received_boxes ?? shipment.number_of_boxes}</span>
+                          <span className="text-slate-600">{item.received_boxes ?? item.expected_boxes}</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -600,13 +612,11 @@ function Summary({ label, value }: { label: string; value: string | number }) {
 function parseDraft(
   item: ShipmentItem,
   draft: ItemDraft | undefined,
-  actualBoxesValue: string,
-  expectedBoxes: number,
 ) {
   const received = Number(draft?.received ?? item.expected_quantity);
   const damaged = Number(draft?.damaged ?? item.damaged_quantity);
   const missing = Number(draft?.missing ?? item.missing_quantity);
-  const actualBoxes = actualBoxesValue.trim() === "" ? expectedBoxes : Number(actualBoxesValue);
+  const boxes = Number(draft?.boxes ?? item.expected_boxes);
 
   if (!Number.isInteger(received) || received < 0) {
     return { error: "Actual quantity must be a whole number zero or greater." } as const;
@@ -620,12 +630,12 @@ function parseDraft(
     return { error: "Missing quantity must be a whole number zero or greater." } as const;
   }
 
-  if (!Number.isInteger(actualBoxes) || actualBoxes < 0) {
+  if (!Number.isInteger(boxes) || boxes < 0) {
     return { error: "Boxes must be a whole number zero or greater." } as const;
   }
 
   return {
-    actualBoxes,
+    boxes,
     damaged,
     error: null,
     missing,

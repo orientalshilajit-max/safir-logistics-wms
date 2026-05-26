@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
-import type { Tables } from "@/app/types/database.types";
+import type { Tables, TablesInsert } from "@/app/types/database.types";
 import {
   Button,
   ErrorBanner,
@@ -22,55 +22,78 @@ type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
 type Shipment = Tables<"incoming_shipments"> & {
   incoming_items: Pick<
     Tables<"incoming_items">,
-    "id" | "product_id" | "expected_quantity" | "notes" | "inventory_posted_at" | "tracking_box_id"
+    | "id"
+    | "product_id"
+    | "expected_quantity"
+    | "expected_boxes"
+    | "notes"
+    | "inventory_posted_at"
   >[];
   incoming_tracking_boxes: Pick<
     Tables<"incoming_tracking_boxes">,
-    "id" | "tracking_number" | "status"
+    "id" | "tracking_number" | "box_count" | "notes" | "status"
   >[];
+  statuses: Pick<Tables<"statuses">, "name"> | null;
 };
 type ShipmentLine = {
-  tracking_number: string;
   product_id: string;
+  new_product_name: string;
   expected_quantity: string;
+  expected_boxes: string;
+  notes: string;
+};
+type TrackingLine = {
+  tracking_number: string;
+  box_count: string;
   notes: string;
 };
 type ShipmentForm = {
   client_id: string;
+  supplier: string;
   carrier: string;
-  tracking_numbers: string;
-  number_of_boxes: string;
+  master_tracking_number: string;
   expected_arrival_date: string;
   notes: string;
   status_id: string;
   lines: ShipmentLine[];
+  trackingLines: TrackingLine[];
 };
 
 const emptyLine: ShipmentLine = {
-  tracking_number: "",
   product_id: "",
+  new_product_name: "",
   expected_quantity: "1",
+  expected_boxes: "1",
+  notes: "",
+};
+
+const emptyTrackingLine: TrackingLine = {
+  tracking_number: "",
+  box_count: "",
   notes: "",
 };
 
 const emptyForm: ShipmentForm = {
   client_id: "",
+  supplier: "",
   carrier: "",
-  tracking_numbers: "",
-  number_of_boxes: "1",
+  master_tracking_number: "",
   expected_arrival_date: "",
   notes: "",
   status_id: "",
   lines: [emptyLine],
+  trackingLines: [emptyTrackingLine],
 };
 
 export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string }) {
   const router = useRouter();
   const { role, clientId } = useAuth();
   const isClientPortal = role === "client";
+  const isAdmin = role === "admin" || role === "warehouse_operator";
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [shipmentStatusName, setShipmentStatusName] = useState("In Transit");
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
   const [hasPostedItems, setHasPostedItems] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -81,6 +104,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     () => products.filter((product) => product.client_id === form.client_id),
     [form.client_id, products],
   );
+  const canEditProductLines = isAdmin || !shipmentId || shipmentStatusName === "In Transit";
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -96,6 +120,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       .select("id, client_id, product_name, sku")
       .is("deleted_at", null)
       .eq("active", true)
+      .order("sort_order", { ascending: true })
       .order("product_name");
     const statusesQuery = supabase
       .from("statuses")
@@ -107,7 +132,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const shipmentQuery = shipmentId
       ? supabase
         .from("incoming_shipments")
-        .select("*, incoming_items(id, product_id, expected_quantity, notes, inventory_posted_at, tracking_box_id), incoming_tracking_boxes(id, tracking_number, status)")
+        .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, notes, status)")
         .eq("id", shipmentId)
         .is("deleted_at", null)
         .single()
@@ -139,39 +164,40 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       setError(shipmentResult.error.message);
     } else if (shipmentResult.data) {
       const shipment = shipmentResult.data as Shipment;
-      const lines = shipment.incoming_items
-        .filter((item) => !("deleted_at" in item))
-        .map((item) => ({
-          tracking_number:
-            shipment.incoming_tracking_boxes.find((box) => box.id === item.tracking_box_id)
-              ?.tracking_number ??
-            shipment.tracking_numbers[0] ??
-            "",
-          product_id: item.product_id,
-          expected_quantity: String(item.expected_quantity),
-          notes: item.notes ?? "",
-        }));
       setHasPostedItems(shipment.incoming_items.some((item) => Boolean(item.inventory_posted_at)));
+      setShipmentStatusName(shipment.statuses?.name ?? "In Transit");
       setForm({
         client_id: shipment.client_id,
-        carrier: shipment.carrier,
-        tracking_numbers: shipment.tracking_numbers.join("\n"),
-        number_of_boxes: String(shipment.number_of_boxes),
+        supplier: shipment.supplier ?? "",
+        carrier: shipment.carrier ?? "",
+        master_tracking_number: shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "",
         expected_arrival_date: shipment.expected_arrival_date ?? "",
         notes: shipment.notes ?? "",
         status_id: shipment.status_id,
-        lines: lines.length > 0 ? lines : [emptyLine],
+        lines: shipment.incoming_items.length > 0
+          ? shipment.incoming_items.map((item) => ({
+            product_id: item.product_id,
+            new_product_name: "",
+            expected_quantity: String(item.expected_quantity),
+            expected_boxes: String(item.expected_boxes),
+            notes: item.notes ?? "",
+          }))
+          : [emptyLine],
+        trackingLines: shipment.incoming_tracking_boxes.length > 0
+          ? shipment.incoming_tracking_boxes.map((box) => ({
+            tracking_number: box.tracking_number,
+            box_count: box.box_count === null ? "" : String(box.box_count),
+            notes: box.notes ?? "",
+          }))
+          : [emptyTrackingLine],
       });
     } else {
+      const inTransitStatus = loadedStatuses.find((status) => status.name === "In Transit") ?? loadedStatuses[0];
+      setShipmentStatusName("In Transit");
       setForm((current) => ({
         ...current,
         client_id: isClientPortal && clientId ? clientId : current.client_id,
-        status_id:
-          current.status_id ||
-          loadedStatuses.find((status) => status.name === "In Transit")?.id ||
-          loadedStatuses.find((status) => status.name === "Expected")?.id ||
-          loadedStatuses[0]?.id ||
-          "",
+        status_id: current.status_id || inTransitStatus?.id || "",
       }));
     }
 
@@ -204,6 +230,15 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }));
   }
 
+  function updateTrackingLine(index: number, line: TrackingLine) {
+    setForm((current) => ({
+      ...current,
+      trackingLines: current.trackingLines.map((currentLine, currentIndex) =>
+        currentIndex === index ? line : currentLine,
+      ),
+    }));
+  }
+
   async function saveShipment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) return;
@@ -211,48 +246,106 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     setSaving(true);
     setError(null);
 
-    const numberOfBoxes = Number(form.number_of_boxes);
-    const validLines = form.lines.filter((line) => line.product_id);
-
-    if (!form.client_id || !form.carrier.trim() || !form.status_id) {
-      setError(isClientPortal ? "Carrier is required." : "Client, carrier, and status are required.");
+    if (!form.client_id || !form.status_id) {
+      setError(isClientPortal ? "Unable to identify your client account." : "Client and status are required.");
       setSaving(false);
       return;
     }
 
-    if (validLines.length === 0) {
+    if (!isAdmin && shipmentId && shipmentStatusName !== "In Transit") {
+      setError("Shipment quantities can only be edited before the shipment arrives at prep.");
+      setSaving(false);
+      return;
+    }
+
+    const preparedLines = form.lines.filter((line) => line.product_id || line.new_product_name.trim());
+
+    if (preparedLines.length === 0) {
       setError("Add at least one product line.");
       setSaving(false);
       return;
     }
 
-    if (!Number.isInteger(numberOfBoxes) || numberOfBoxes < 0) {
-      setError("Box count must be a whole number zero or greater.");
-      setSaving(false);
-      return;
-    }
-
-    for (const line of validLines) {
+    for (const line of preparedLines) {
       const expectedQuantity = Number(line.expected_quantity);
+      const expectedBoxes = Number(line.expected_boxes);
 
       if (!Number.isInteger(expectedQuantity) || expectedQuantity < 0) {
-        setError("Expected quantities must be whole numbers zero or greater.");
+        setError("Unit quantities must be whole numbers zero or greater.");
+        setSaving(false);
+        return;
+      }
+
+      if (!Number.isInteger(expectedBoxes) || expectedBoxes < 0) {
+        setError("Box quantities must be whole numbers zero or greater.");
         setSaving(false);
         return;
       }
     }
 
+    for (const line of form.trackingLines) {
+      if (!line.tracking_number.trim() && !line.box_count.trim() && !line.notes.trim()) continue;
+      const boxCount = line.box_count.trim() === "" ? null : Number(line.box_count);
+
+      if (boxCount !== null && (!Number.isInteger(boxCount) || boxCount < 0)) {
+        setError("Tracking box counts must be whole numbers zero or greater.");
+        setSaving(false);
+        return;
+      }
+    }
+
+    const lineProductIds: string[] = [];
+
+    for (const line of preparedLines) {
+      if (line.product_id) {
+        lineProductIds.push(line.product_id);
+        continue;
+      }
+
+      const { data: lastProduct } = await supabase
+        .from("products")
+        .select("sort_order")
+        .eq("client_id", form.client_id)
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const productPayload: TablesInsert<"products"> = {
+        client_id: form.client_id,
+        product_name: line.new_product_name.trim(),
+        active: true,
+        sort_order: (lastProduct?.sort_order ?? 0) + 1,
+      };
+      const { data: product, error: productError } = await supabase
+        .from("products")
+        .insert(productPayload)
+        .select("id")
+        .single();
+
+      if (productError || !product) {
+        setError(productError?.message ?? "Unable to create product.");
+        setSaving(false);
+        return;
+      }
+
+      lineProductIds.push(product.id);
+    }
+
+    const trackingNumbers = form.trackingLines
+      .map((line) => line.tracking_number.trim())
+      .filter(Boolean);
+    const totalBoxes = preparedLines.reduce((sum, line) => sum + Number(line.expected_boxes), 0);
+    const masterTracking = form.master_tracking_number.trim();
     const shipmentPayload = {
       client_id: form.client_id,
+      supplier: form.supplier.trim() || null,
       carrier: form.carrier.trim(),
-      tracking_numbers: form.tracking_numbers
-        .split(/[\n,]+/)
-        .map((value) => value.trim())
-        .filter(Boolean),
-      number_of_boxes: numberOfBoxes,
+      master_tracking_number: masterTracking || null,
+      tracking_numbers: Array.from(new Set([masterTracking, ...trackingNumbers].filter(Boolean))),
+      number_of_boxes: totalBoxes,
       expected_arrival_date: form.expected_arrival_date || null,
       notes: form.notes.trim() || null,
-      status_id: form.status_id,
+      status_id: isAdmin ? form.status_id : statuses.find((status) => status.name === "In Transit")?.id ?? form.status_id,
     };
 
     const shipmentResult = shipmentId
@@ -265,55 +358,28 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       return;
     }
 
-    if (!shipmentId || !hasPostedItems) {
-      if (shipmentId) {
-        const { error: softDeleteError } = await supabase
-          .from("incoming_items")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("shipment_id", shipmentId)
-          .is("inventory_posted_at", null);
+    const activeShipmentId = shipmentResult.data.id;
 
-        if (softDeleteError) {
-          setError(softDeleteError.message);
-          setSaving(false);
-          return;
-        }
-      }
+    if (!hasPostedItems || isAdmin) {
+      const itemDeleteQuery = supabase
+        .from("incoming_items")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("shipment_id", activeShipmentId)
+        .is("inventory_posted_at", null);
+      const { error: softDeleteError } = await itemDeleteQuery;
 
-      const trackingNumbers = Array.from(
-        new Set([
-          ...shipmentPayload.tracking_numbers,
-          ...validLines.map((line) => line.tracking_number.trim()).filter(Boolean),
-        ]),
-      );
-      const { data: boxes, error: boxesError } = await supabase
-        .from("incoming_tracking_boxes")
-        .upsert(
-          trackingNumbers.map((trackingNumber) => ({
-            shipment_id: shipmentResult.data.id,
-            tracking_number: trackingNumber,
-            carrier: form.carrier.trim(),
-          })),
-          { onConflict: "shipment_id,tracking_number" },
-        )
-        .select("id, tracking_number");
-
-      if (boxesError) {
-        setError(boxesError.message);
+      if (softDeleteError) {
+        setError(softDeleteError.message);
         setSaving(false);
         return;
       }
 
-      const boxesByTracking = new Map((boxes ?? []).map((box) => [box.tracking_number, box.id]));
-      const fallbackBoxId = boxes?.[0]?.id ?? null;
-
       const { error: itemsError } = await supabase.from("incoming_items").insert(
-        validLines.map((line) => ({
-          shipment_id: shipmentResult.data.id,
-          tracking_box_id:
-            boxesByTracking.get(line.tracking_number.trim()) ?? fallbackBoxId,
-          product_id: line.product_id,
-          expected_quantity: Number(line.expected_quantity) || 0,
+        preparedLines.map((line, index) => ({
+          shipment_id: activeShipmentId,
+          product_id: lineProductIds[index],
+          expected_quantity: Number(line.expected_quantity),
+          expected_boxes: Number(line.expected_boxes),
           notes: line.notes.trim() || null,
         })),
       );
@@ -323,6 +389,48 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         setSaving(false);
         return;
       }
+    }
+
+    const { error: deleteBoxesError } = await supabase
+      .from("incoming_tracking_boxes")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("shipment_id", activeShipmentId)
+      .is("inventory_posted_at", null);
+
+    if (deleteBoxesError) {
+      setError(deleteBoxesError.message);
+      setSaving(false);
+      return;
+    }
+
+    const validTrackingRows = form.trackingLines.filter((line) => line.tracking_number.trim());
+
+    if (validTrackingRows.length > 0) {
+      const { error: boxesError } = await supabase.from("incoming_tracking_boxes").insert(
+        validTrackingRows.map((line) => ({
+          shipment_id: activeShipmentId,
+          tracking_number: line.tracking_number.trim(),
+          carrier: form.carrier.trim() || null,
+          box_count: line.box_count.trim() === "" ? null : Number(line.box_count),
+          notes: line.notes.trim() || null,
+        })),
+      );
+
+      if (boxesError) {
+        setError(boxesError.message);
+        setSaving(false);
+        return;
+      }
+    }
+
+    if (isClientPortal && shipmentId) {
+      await supabase.from("notifications").insert({
+        client_id: form.client_id,
+        entity_id: activeShipmentId,
+        entity_type: "incoming_shipments",
+        notification_type: "incoming_shipment_updated",
+        title: "Client updated incoming shipment",
+      });
     }
 
     router.push("/incoming-shipments");
@@ -341,7 +449,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         </Link>
       </div>
       <ErrorBanner message={error} />
-      <Panel title={shipmentId ? "Edit incoming shipment" : "Add incoming shipment"}>
+      <Panel title={shipmentId ? "Edit incoming shipment" : "Create incoming shipment"}>
         <form className="space-y-5" onSubmit={(event) => void saveShipment(event)}>
           <div className="grid gap-4 lg:grid-cols-2">
             {isClientPortal ? null : (
@@ -356,16 +464,19 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                 </select>
               </Field>
             )}
-            <Field label="Carrier">
-              <input className={inputClassName} required value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
+            <Field label="Supplier optional">
+              <input className={inputClassName} value={form.supplier} onChange={(event) => setForm({ ...form, supplier: event.target.value })} />
             </Field>
-            <Field label="Boxes">
-              <input className={inputClassName} min="0" type="number" value={form.number_of_boxes} onChange={(event) => setForm({ ...form, number_of_boxes: event.target.value })} />
+            <Field label="Carrier optional">
+              <input className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
             </Field>
-            <Field label="Expected arrival">
+            <Field label="Master tracking number optional">
+              <input className={inputClassName} value={form.master_tracking_number} onChange={(event) => setForm({ ...form, master_tracking_number: event.target.value })} />
+            </Field>
+            <Field label="ETA optional">
               <input className={inputClassName} type="date" value={form.expected_arrival_date} onChange={(event) => setForm({ ...form, expected_arrival_date: event.target.value })} />
             </Field>
-            {isClientPortal ? null : (
+            {isAdmin ? (
               <Field label="Status">
                 <select className={inputClassName} required value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })}>
                   <option value="">Select status</option>
@@ -376,33 +487,26 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                   ))}
                 </select>
               </Field>
-            )}
+            ) : null}
           </div>
-          <Field label="Tracking numbers">
-            <textarea className={textAreaClassName} placeholder="One per line or comma separated" value={form.tracking_numbers} onChange={(event) => setForm({ ...form, tracking_numbers: event.target.value })} />
-          </Field>
-          <Field label="Notes">
+          <Field label="Notes optional">
             <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
           </Field>
 
           <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-slate-950">Product lines</p>
-                {hasPostedItems ? (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Product lines are locked after receiving has posted inventory.
-                  </p>
-                ) : null}
+                <p className="text-sm font-semibold text-slate-950">Products in shipment</p>
+                <p className="mt-1 text-xs text-slate-500">Add one or more catalog products. Create a product inline if it is not listed yet.</p>
               </div>
-              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || hasPostedItems}>
-                Add line
+              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || !canEditProductLines}>
+                Add product line
               </Button>
             </div>
             {form.lines.map((line, index) => (
-              <div key={index} className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1fr)_10rem_minmax(0,1fr)_auto]">
+              <div key={index} className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_8rem_8rem_minmax(0,1fr)_auto]">
                 <Field label="Product">
-                  <select className={inputClassName} required disabled={hasPostedItems} value={line.product_id} onChange={(event) => updateLine(index, { ...line, product_id: event.target.value })}>
+                  <select className={inputClassName} disabled={!canEditProductLines} value={line.product_id} onChange={(event) => updateLine(index, { ...line, product_id: event.target.value, new_product_name: "" })}>
                     <option value="">Select product</option>
                     {availableProducts.map((product) => (
                       <option key={product.id} value={product.id}>
@@ -411,27 +515,19 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                     ))}
                   </select>
                 </Field>
-                <Field label="Tracking">
-                  <select className={inputClassName} disabled={hasPostedItems} value={line.tracking_number} onChange={(event) => updateLine(index, { ...line, tracking_number: event.target.value })}>
-                    <option value="">Use first tracking</option>
-                    {form.tracking_numbers
-                      .split(/[\n,]+/)
-                      .map((value) => value.trim())
-                      .filter(Boolean)
-                      .map((trackingNumber) => (
-                        <option key={trackingNumber} value={trackingNumber}>
-                          {trackingNumber}
-                        </option>
-                      ))}
-                  </select>
+                <Field label="Or create new product">
+                  <input className={inputClassName} disabled={!canEditProductLines || Boolean(line.product_id)} value={line.new_product_name} onChange={(event) => updateLine(index, { ...line, new_product_name: event.target.value })} />
                 </Field>
-                <Field label="Expected">
-                  <input className={inputClassName} min="0" required disabled={hasPostedItems} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
+                <Field label="Units">
+                  <input className={inputClassName} min="0" required disabled={!canEditProductLines} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
                 </Field>
-                <Field label="Line notes">
-                  <input className={inputClassName} disabled={hasPostedItems} value={line.notes} onChange={(event) => updateLine(index, { ...line, notes: event.target.value })} />
+                <Field label="Boxes">
+                  <input className={inputClassName} min="0" required disabled={!canEditProductLines} type="number" value={line.expected_boxes} onChange={(event) => updateLine(index, { ...line, expected_boxes: event.target.value })} />
                 </Field>
-                {form.lines.length > 1 && !hasPostedItems ? (
+                <Field label="Notes">
+                  <input className={inputClassName} disabled={!canEditProductLines} value={line.notes} onChange={(event) => updateLine(index, { ...line, notes: event.target.value })} />
+                </Field>
+                {form.lines.length > 1 && canEditProductLines ? (
                   <div className="flex items-end">
                     <Button type="button" variant="danger" onClick={() => setForm({ ...form, lines: form.lines.filter((_, currentIndex) => currentIndex !== index) })}>
                       Remove
@@ -442,8 +538,40 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             ))}
           </div>
 
+          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">Tracking / Boxes optional</p>
+                <p className="mt-1 text-xs text-slate-500">Use one master tracking, per-box tracking rows, or leave this blank for now.</p>
+              </div>
+              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, trackingLines: [...form.trackingLines, emptyTrackingLine] })}>
+                Add tracking number
+              </Button>
+            </div>
+            {form.trackingLines.map((line, index) => (
+              <div key={index} className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
+                <Field label="Tracking number">
+                  <input className={inputClassName} value={line.tracking_number} onChange={(event) => updateTrackingLine(index, { ...line, tracking_number: event.target.value })} />
+                </Field>
+                <Field label="Box count">
+                  <input className={inputClassName} min="0" type="number" value={line.box_count} onChange={(event) => updateTrackingLine(index, { ...line, box_count: event.target.value })} />
+                </Field>
+                <Field label="Notes">
+                  <input className={inputClassName} value={line.notes} onChange={(event) => updateTrackingLine(index, { ...line, notes: event.target.value })} />
+                </Field>
+                {form.trackingLines.length > 1 ? (
+                  <div className="flex items-end">
+                    <Button type="button" variant="danger" onClick={() => setForm({ ...form, trackingLines: form.trackingLines.filter((_, currentIndex) => currentIndex !== index) })}>
+                      Remove
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+
           <div className="flex gap-2">
-            <Button type="submit" disabled={saving || clients.length === 0 || statuses.length === 0}>
+            <Button type="submit" disabled={saving || (!isClientPortal && clients.length === 0) || statuses.length === 0}>
               {saving ? "Saving..." : "Save shipment"}
             </Button>
             <Link href="/incoming-shipments" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">

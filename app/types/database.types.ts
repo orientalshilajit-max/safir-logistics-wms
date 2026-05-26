@@ -300,12 +300,14 @@ export type Database = {
           damaged_quantity: number;
           deleted_at: string | null;
           expected_quantity: number;
+          expected_boxes: number;
           id: string;
           inventory_posted_at: string | null;
           is_unexpected: boolean;
           missing_quantity: number;
           notes: string | null;
           product_id: string;
+          received_boxes: number | null;
           received_quantity: number;
           shipment_id: string;
           tracking_box_id: string | null;
@@ -316,12 +318,14 @@ export type Database = {
           damaged_quantity?: number;
           deleted_at?: string | null;
           expected_quantity: number;
+          expected_boxes?: number;
           id?: string;
           inventory_posted_at?: string | null;
           is_unexpected?: boolean;
           missing_quantity?: number;
           notes?: string | null;
           product_id: string;
+          received_boxes?: number | null;
           received_quantity?: number;
           shipment_id: string;
           tracking_box_id?: string | null;
@@ -332,12 +336,14 @@ export type Database = {
           damaged_quantity?: number;
           deleted_at?: string | null;
           expected_quantity?: number;
+          expected_boxes?: number;
           id?: string;
           inventory_posted_at?: string | null;
           is_unexpected?: boolean;
           missing_quantity?: number;
           notes?: string | null;
           product_id?: string;
+          received_boxes?: number | null;
           received_quantity?: number;
           shipment_id?: string;
           tracking_box_id?: string | null;
@@ -370,11 +376,13 @@ export type Database = {
       incoming_tracking_boxes: {
         Row: {
           carrier: string | null;
+          box_count: number | null;
           created_at: string;
           deleted_at: string | null;
           id: string;
           inventory_posted_at: string | null;
           issue_notes: string | null;
+          notes: string | null;
           shipment_id: string;
           status: "In Transit" | "Delivered" | "Received" | "Issue";
           tracking_number: string;
@@ -382,11 +390,13 @@ export type Database = {
         };
         Insert: {
           carrier?: string | null;
+          box_count?: number | null;
           created_at?: string;
           deleted_at?: string | null;
           id?: string;
           inventory_posted_at?: string | null;
           issue_notes?: string | null;
+          notes?: string | null;
           shipment_id: string;
           status?: "In Transit" | "Delivered" | "Received" | "Issue";
           tracking_number: string;
@@ -394,11 +404,13 @@ export type Database = {
         };
         Update: {
           carrier?: string | null;
+          box_count?: number | null;
           created_at?: string;
           deleted_at?: string | null;
           id?: string;
           inventory_posted_at?: string | null;
           issue_notes?: string | null;
+          notes?: string | null;
           shipment_id?: string;
           status?: "In Transit" | "Delivered" | "Received" | "Issue";
           tracking_number?: string;
@@ -423,9 +435,11 @@ export type Database = {
           expected_arrival_date: string | null;
           actual_received_boxes: number | null;
           id: string;
+          master_tracking_number: string | null;
           notes: string | null;
           number_of_boxes: number;
           status_id: string;
+          supplier: string | null;
           tracking_numbers: string[];
           updated_at: string;
         };
@@ -437,9 +451,11 @@ export type Database = {
           expected_arrival_date?: string | null;
           actual_received_boxes?: number | null;
           id?: string;
+          master_tracking_number?: string | null;
           notes?: string | null;
           number_of_boxes?: number;
           status_id: string;
+          supplier?: string | null;
           tracking_numbers?: string[];
           updated_at?: string;
         };
@@ -451,9 +467,11 @@ export type Database = {
           expected_arrival_date?: string | null;
           actual_received_boxes?: number | null;
           id?: string;
+          master_tracking_number?: string | null;
           notes?: string | null;
           number_of_boxes?: number;
           status_id?: string;
+          supplier?: string | null;
           tracking_numbers?: string[];
           updated_at?: string;
         };

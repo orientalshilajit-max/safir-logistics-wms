@@ -19,17 +19,20 @@ type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
 type TrackingBox = Pick<
   Tables<"incoming_tracking_boxes">,
-  "id" | "tracking_number" | "status" | "inventory_posted_at"
+  "id" | "tracking_number" | "status" | "inventory_posted_at" | "box_count" | "notes" | "carrier"
 >;
 type IncomingItem = Pick<
   Tables<"incoming_items">,
   | "id"
   | "expected_quantity"
+  | "expected_boxes"
   | "received_quantity"
+  | "received_boxes"
   | "damaged_quantity"
   | "missing_quantity"
   | "is_unexpected"
   | "inventory_posted_at"
+  | "notes"
 > & {
   products: Pick<Tables<"products">, "product_name" | "sku" | "asin" | "barcode"> | null;
 };
@@ -43,7 +46,7 @@ type Shipment = Tables<"incoming_shipments"> & {
 const statusTabs = [
   { label: "All", value: "all" },
   { label: "In Transit", value: "In Transit" },
-  { label: "Arrived at Prep", value: "Arrived at Prep" },
+  { label: "Arrived / Receiving", value: "Arrived at Prep" },
   { label: "Received", value: "Received" },
   { label: "Issue", value: "Issue" },
 ];
@@ -69,7 +72,7 @@ export function IncomingShipmentsClient({
 
     const shipmentsQuery = supabase
       .from("incoming_shipments")
-      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id, expected_quantity, received_quantity, damaged_quantity, missing_quantity, is_unexpected, inventory_posted_at, products(product_name, sku, asin, barcode)), incoming_tracking_boxes(id, tracking_number, status, inventory_posted_at)")
+      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id, expected_quantity, expected_boxes, received_quantity, received_boxes, damaged_quantity, missing_quantity, is_unexpected, inventory_posted_at, notes, products(product_name, sku, asin, barcode)), incoming_tracking_boxes(id, tracking_number, status, inventory_posted_at, box_count, notes, carrier)")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
@@ -108,9 +111,15 @@ export function IncomingShipmentsClient({
         !normalized ||
         shipment.clients?.company_name.toLowerCase().includes(normalized) ||
         shipment.id.toLowerCase().includes(normalized) ||
+        (shipment.supplier ?? "").toLowerCase().includes(normalized) ||
         shipment.carrier.toLowerCase().includes(normalized) ||
+        (shipment.master_tracking_number ?? "").toLowerCase().includes(normalized) ||
         shipment.tracking_numbers.some((tracking) =>
           tracking.toLowerCase().includes(normalized),
+        ) ||
+        shipment.incoming_items.some((item) =>
+          item.products?.product_name.toLowerCase().includes(normalized) ||
+          (item.products?.sku ?? "").toLowerCase().includes(normalized),
         );
       const matchesDate = dateFilter === "all" || isWithinDateFilter(shipment.created_at, dateFilter);
 
@@ -131,9 +140,10 @@ export function IncomingShipmentsClient({
         if (status === "In Transit") totals.inTransit += 1;
         if (status === "Arrived at Prep") totals.receiving += 1;
         if (status === "Received") totals.received += 1;
+        if (status === "Issue") totals.issue += 1;
         return totals;
       },
-      { total: 0, inTransit: 0, receiving: 0, received: 0 },
+      { total: 0, inTransit: 0, receiving: 0, received: 0, issue: 0 },
     );
   }, [shipments]);
   const adminShipmentStats = shipmentStats;
@@ -154,11 +164,12 @@ export function IncomingShipmentsClient({
           </Link>
         </div>
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <ClientStat label="Total Shipments" value={shipmentStats.total} sublabel="All time" />
           <ClientStat label="In Transit" value={shipmentStats.inTransit} sublabel="Shipments on the way" />
-          <ClientStat label="Receiving / Arrived" value={shipmentStats.receiving} sublabel="At prep center" />
-          <ClientStat label="Completed / Received" value={shipmentStats.received} sublabel="Received" />
+          <ClientStat label="Arrived / Receiving" value={shipmentStats.receiving} sublabel="At prep center" />
+          <ClientStat label="Received" value={shipmentStats.received} sublabel="Received" />
+          <ClientStat label="Issue" value={shipmentStats.issue} sublabel="Needs attention" />
         </section>
 
         <Panel title="Incoming Shipments">
@@ -202,6 +213,7 @@ export function IncomingShipmentsClient({
                 <ClientShipmentsTable
                   shipments={filteredShipments}
                   selectedShipmentId={selectedShipment?.id ?? null}
+                  showClient={false}
                   onSelect={setSelectedShipmentId}
                 />
               </div>
@@ -227,11 +239,12 @@ export function IncomingShipmentsClient({
         </Link>
       </div>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <ClientStat label="Total Shipments" value={adminShipmentStats.total} sublabel="All clients" />
         <ClientStat label="In Transit" value={adminShipmentStats.inTransit} sublabel="Shipments on the way" />
-        <ClientStat label="Receiving / Arrived" value={adminShipmentStats.receiving} sublabel="At prep center" />
-        <ClientStat label="Completed / Received" value={adminShipmentStats.received} sublabel="Received" />
+        <ClientStat label="Arrived / Receiving" value={adminShipmentStats.receiving} sublabel="At prep center" />
+        <ClientStat label="Received" value={adminShipmentStats.received} sublabel="Received" />
+        <ClientStat label="Issue" value={adminShipmentStats.issue} sublabel="Needs attention" />
       </section>
 
       <Panel title="Incoming shipments">
@@ -247,12 +260,24 @@ export function IncomingShipmentsClient({
               </QuickFilterButton>
             ))}
           </div>
-          <input
-            className={inputClassName}
-            placeholder="Search client, shipment, carrier, or tracking"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem]">
+            <input
+              className={inputClassName}
+              placeholder="Search shipment ID, product, tracking number, supplier"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <select
+              className={inputClassName}
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+            >
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="week">This week</option>
+              <option value="month">This month</option>
+            </select>
+          </div>
         </div>
 
         {loading ? (
@@ -263,66 +288,13 @@ export function IncomingShipmentsClient({
             body="Add an incoming shipment or adjust the filters."
           />
         ) : (
-          <div className="max-h-[36rem] overflow-auto">
-            <table className="w-full min-w-[1120px] text-left text-sm tabular-nums">
-              <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Client</th>
-                  <th className="px-4 py-3 font-semibold">Shipment ID / Reference</th>
-                  <th className="px-4 py-3 font-semibold">Date</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Tracking progress</th>
-                  <th className="px-4 py-3 font-semibold">Boxes</th>
-                  <th className="px-4 py-3 font-semibold">Units Expected</th>
-                  <th className="px-4 py-3 font-semibold">Units Received</th>
-                  <th className="px-4 py-3 font-semibold">Issues</th>
-                  <th className="px-4 py-3 font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredShipments.map((shipment) => {
-                  const summary = getShipmentSummary(shipment);
-                  const statusName = getDisplayStatus(shipment);
-
-                  return (
-                    <tr key={shipment.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
-                        {shipment.clients?.company_name ?? "Unknown"}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        <div className="font-medium text-slate-950">{shipment.id.slice(0, 8)}</div>
-                        <div className="mt-1 text-xs text-slate-500">{shipment.carrier}</div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{formatDate(shipment.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <StatusBadge tone={statusTone(statusName)}>{statusName}</StatusBadge>
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {summary.deliveredBoxes}/{summary.totalBoxes} delivered
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {summary.totalBoxes || shipment.number_of_boxes}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{summary.expectedUnits}</td>
-                      <td className="px-4 py-3 text-slate-600">{summary.receivedUnits}</td>
-                      <td className="px-4 py-3">
-                        <StatusBadge tone={summary.issueCount > 0 ? "rose" : "emerald"}>
-                          {summary.issueCount}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/incoming-shipments/${shipment.id}/edit`}
-                          className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="max-h-[42rem] overflow-auto">
+            <ClientShipmentsTable
+              shipments={filteredShipments}
+              selectedShipmentId={selectedShipment?.id ?? null}
+              showClient
+              onSelect={setSelectedShipmentId}
+            />
           </div>
         )}
       </Panel>
@@ -331,10 +303,10 @@ export function IncomingShipmentsClient({
 }
 
 export function getShipmentSummary(shipment: Shipment) {
-  const totalBoxes = shipment.incoming_tracking_boxes.length;
+  const totalBoxes = shipment.incoming_items.reduce((sum, item) => sum + item.expected_boxes, 0);
   const deliveredBoxes = shipment.incoming_tracking_boxes.filter((box) =>
     ["Delivered", "Received", "Issue"].includes(box.status),
-  ).length;
+  ).reduce((sum, box) => sum + (box.box_count ?? 1), 0);
   const expectedUnits = shipment.incoming_items.reduce(
     (sum, item) => sum + item.expected_quantity,
     0,
@@ -349,6 +321,7 @@ export function getShipmentSummary(shipment: Shipment) {
       (item) =>
         item.is_unexpected ||
         (item.inventory_posted_at && item.expected_quantity !== item.received_quantity) ||
+        (item.inventory_posted_at && item.expected_boxes !== (item.received_boxes ?? item.expected_boxes)) ||
         item.damaged_quantity > 0 ||
         item.missing_quantity > 0,
     ).length;
@@ -358,7 +331,7 @@ export function getShipmentSummary(shipment: Shipment) {
     expectedUnits,
     issueCount,
     receivedUnits,
-    totalBoxes: shipment.number_of_boxes || totalBoxes,
+    totalBoxes: totalBoxes || shipment.number_of_boxes,
     trackingRows: totalBoxes,
   };
 }
@@ -384,24 +357,27 @@ function ClientStat({
 function ClientShipmentsTable({
   shipments,
   selectedShipmentId,
+  showClient,
   onSelect,
 }: {
   shipments: Shipment[];
   selectedShipmentId: string | null;
+  showClient: boolean;
   onSelect: (id: string) => void;
 }) {
   return (
-    <table className="w-full min-w-[1100px] text-left text-sm tabular-nums">
-      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+    <table className="w-full min-w-[1180px] text-left text-sm tabular-nums">
+      <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
         <tr>
+          {showClient ? <th className="px-3 py-2.5 font-semibold">Client</th> : null}
           <th className="px-4 py-3 font-semibold">Shipment ID</th>
           <th className="px-4 py-3 font-semibold">Created Date</th>
           <th className="px-4 py-3 font-semibold">Products</th>
           <th className="px-4 py-3 font-semibold">Boxes</th>
           <th className="px-4 py-3 font-semibold">Units Expected</th>
-          <th className="px-4 py-3 font-semibold">Tracking Number</th>
+          <th className="px-4 py-3 font-semibold">Master Tracking</th>
           <th className="px-4 py-3 font-semibold">Carrier</th>
-          <th className="px-4 py-3 font-semibold">ETA / Date</th>
+          <th className="px-4 py-3 font-semibold">ETA</th>
           <th className="px-4 py-3 font-semibold">Status</th>
           <th className="px-4 py-3 font-semibold">Actions</th>
         </tr>
@@ -418,18 +394,22 @@ function ClientShipmentsTable({
                 className={selected ? "bg-blue-50/60" : "cursor-pointer hover:bg-slate-50"}
                 onClick={() => onSelect(shipment.id)}
               >
+                {showClient ? (
+                  <td className="px-3 py-2.5 font-medium text-slate-950">{shipment.clients?.company_name ?? "Unknown"}</td>
+                ) : null}
                 <td className="px-3 py-2.5 font-medium text-blue-700">{shipment.id.slice(0, 8)}</td>
                 <td className="px-3 py-2.5 text-slate-600">{formatDate(shipment.created_at)}</td>
-                <td className="px-3 py-2.5 text-slate-600">{shipment.incoming_items.length}</td>
-                <td className="px-3 py-2.5 text-slate-600">{shipment.number_of_boxes}</td>
+                <td className="px-3 py-2.5 text-slate-600">{formatProductSummary(shipment)}</td>
+                <td className="px-3 py-2.5 text-slate-600">{summary.totalBoxes}</td>
                 <td className="px-3 py-2.5 text-slate-600">{summary.expectedUnits}</td>
-                <td className="px-3 py-2.5 text-slate-600">{shipment.tracking_numbers[0] ?? "-"}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "-"}</td>
                 <td className="px-3 py-2.5 text-slate-600">{shipment.carrier || "-"}</td>
-                <td className="px-3 py-2.5 text-slate-600">{formatDate(shipment.created_at)}</td>
+                <td className="px-3 py-2.5 text-slate-600">{shipment.expected_arrival_date ? formatDate(shipment.expected_arrival_date) : "-"}</td>
                 <td className="px-3 py-2.5">
                   <StatusBadge tone={statusTone(statusName)}>{statusName === "Arrived at Prep" ? "Receiving" : statusName}</StatusBadge>
                 </td>
                 <td className="px-3 py-2.5">
+                  <div className="flex items-center gap-1">
                   <button
                     type="button"
                     aria-label={`Open shipment ${shipment.id.slice(0, 8)}`}
@@ -441,11 +421,20 @@ function ClientShipmentsTable({
                   >
                     {selected ? "-" : "+"}
                   </button>
+                  <Link
+                    href={`/incoming-shipments/${shipment.id}/edit`}
+                    aria-label={`Edit shipment ${shipment.id.slice(0, 8)}`}
+                    className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <PencilIcon />
+                  </Link>
+                  </div>
                 </td>
               </tr>
               {selected ? (
                 <tr key={`${shipment.id}-details`} className="bg-slate-50/70">
-                  <td colSpan={10} className="px-3 py-3">
+                  <td colSpan={showClient ? 11 : 10} className="px-3 py-3">
                     <ClientShipmentDetails shipment={shipment} />
                   </td>
                 </tr>
@@ -459,6 +448,15 @@ function ClientShipmentsTable({
 }
 
 function ClientShipmentDetails({ shipment }: { shipment: Shipment }) {
+  const [activeTab, setActiveTab] = useState<"products" | "tracking" | "documents" | "notes" | "history">("products");
+  const tabs = [
+    { label: "Products", value: "products" },
+    { label: "Tracking / Boxes", value: "tracking" },
+    { label: "Documents", value: "documents" },
+    { label: "Notes", value: "notes" },
+    { label: "History", value: "history" },
+  ] as const;
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
@@ -470,14 +468,21 @@ function ClientShipmentDetails({ shipment }: { shipment: Shipment }) {
       </div>
       <div className="border-b border-slate-200 px-4 pt-3">
         <div className="flex gap-4 text-sm font-semibold text-slate-600">
-          <span className="border-b-2 border-blue-600 pb-3 text-blue-700">Products</span>
-          <span className="pb-3">Boxes</span>
-          <span className="pb-3">Documents</span>
-          <span className="pb-3">History</span>
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              className={activeTab === tab.value ? "border-b-2 border-blue-600 pb-3 text-blue-700" : "pb-3"}
+              onClick={() => setActiveTab(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className="overflow-auto p-4">
-        <table className="w-full min-w-[760px] text-left text-sm tabular-nums">
+        {activeTab === "products" ? (
+        <table className="w-full min-w-[860px] text-left text-sm tabular-nums">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-3 py-3 font-semibold">Product</th>
@@ -485,7 +490,9 @@ function ClientShipmentDetails({ shipment }: { shipment: Shipment }) {
               <th className="px-3 py-3 font-semibold">ASIN / UPC</th>
               <th className="px-3 py-3 font-semibold">Units Expected</th>
               <th className="px-3 py-3 font-semibold">Units Received</th>
-              <th className="px-3 py-3 font-semibold">Boxes</th>
+              <th className="px-3 py-3 font-semibold">Boxes Expected</th>
+              <th className="px-3 py-3 font-semibold">Boxes Received</th>
+              <th className="px-3 py-3 font-semibold">Damaged</th>
               <th className="px-3 py-3 font-semibold">Notes</th>
             </tr>
           </thead>
@@ -497,15 +504,67 @@ function ClientShipmentDetails({ shipment }: { shipment: Shipment }) {
                 <td className="px-3 py-3 text-slate-600">{item.products?.asin ?? item.products?.barcode ?? "-"}</td>
                 <td className="px-3 py-3 text-slate-600">{item.expected_quantity}</td>
                 <td className="px-3 py-3 text-slate-600">{item.inventory_posted_at ? item.received_quantity : "-"}</td>
-                <td className="px-3 py-3 text-slate-600">{shipment.number_of_boxes}</td>
-                <td className="px-3 py-3 text-slate-600">{item.is_unexpected ? "Unexpected product" : "-"}</td>
+                <td className="px-3 py-3 text-slate-600">{item.expected_boxes}</td>
+                <td className="px-3 py-3 text-slate-600">{item.inventory_posted_at ? item.received_boxes ?? item.expected_boxes : "-"}</td>
+                <td className="px-3 py-3 text-slate-600">{item.damaged_quantity}</td>
+                <td className="px-3 py-3 text-slate-600">{item.notes ?? (item.is_unexpected ? "Unexpected product" : "-")}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        ) : null}
+        {activeTab === "tracking" ? (
+          <table className="w-full min-w-[640px] text-left text-sm tabular-nums">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-3 font-semibold">Tracking Number</th>
+                <th className="px-3 py-3 font-semibold">Box Count</th>
+                <th className="px-3 py-3 font-semibold">Notes</th>
+                <th className="px-3 py-3 font-semibold">Delivery Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {shipment.incoming_tracking_boxes.length === 0 ? (
+                <tr><td className="px-3 py-3 text-slate-500" colSpan={4}>No tracking numbers yet.</td></tr>
+              ) : shipment.incoming_tracking_boxes.map((box) => (
+                <tr key={box.id}>
+                  <td className="px-3 py-3 font-medium text-slate-950">{box.tracking_number}</td>
+                  <td className="px-3 py-3 text-slate-600">{box.box_count ?? "-"}</td>
+                  <td className="px-3 py-3 text-slate-600">{box.notes ?? "-"}</td>
+                  <td className="px-3 py-3"><StatusBadge tone={box.status === "Issue" ? "rose" : box.status === "Received" ? "emerald" : box.status === "Delivered" ? "orange" : "blue"}>{box.status}</StatusBadge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+        {activeTab === "documents" ? <p className="text-sm text-slate-500">Shipment documents are available from Files & Documents.</p> : null}
+        {activeTab === "notes" ? <p className="text-sm text-slate-600">{shipment.notes ?? "No shipment notes."}</p> : null}
+        {activeTab === "history" ? (
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>Created {formatDate(shipment.created_at)}</p>
+            <p>Updated {formatDate(shipment.updated_at)}</p>
+            {shipment.incoming_items.some((item) => item.inventory_posted_at) ? <p>Inventory posted for received products.</p> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function formatProductSummary(shipment: Shipment) {
+  const names = shipment.incoming_items
+    .map((item) => item.products?.product_name)
+    .filter(Boolean);
+
+  if (names.length === 0) {
+    return "-";
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  return `${names[0]} +${names.length - 1}`;
 }
 
 export function getDisplayStatus(shipment: Shipment) {
@@ -574,4 +633,13 @@ function formatDate(value: string) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function PencilIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
+    </svg>
+  );
 }
