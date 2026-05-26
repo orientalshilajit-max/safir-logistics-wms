@@ -669,6 +669,7 @@ export type Database = {
           received_qty: number;
           reserved_qty: number;
           shipped_qty: number;
+          storage_boxes: number;
           updated_at: string;
         };
         Insert: {
@@ -684,6 +685,7 @@ export type Database = {
           received_qty?: number;
           reserved_qty?: number;
           shipped_qty?: number;
+          storage_boxes?: number;
           updated_at?: string;
         };
         Update: {
@@ -699,6 +701,7 @@ export type Database = {
           received_qty?: number;
           reserved_qty?: number;
           shipped_qty?: number;
+          storage_boxes?: number;
           updated_at?: string;
         };
         Relationships: [
@@ -711,6 +714,73 @@ export type Database = {
           },
           {
             foreignKeyName: "inventory_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      inventory_adjustments: {
+        Row: {
+          adjustment_type: string;
+          client_id: string;
+          created_at: string;
+          created_by: string | null;
+          id: string;
+          inventory_id: string | null;
+          new_value: number;
+          notes: string | null;
+          previous_value: number;
+          product_id: string;
+          quantity: number;
+          reason: string;
+        };
+        Insert: {
+          adjustment_type: string;
+          client_id: string;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          inventory_id?: string | null;
+          new_value: number;
+          notes?: string | null;
+          previous_value: number;
+          product_id: string;
+          quantity: number;
+          reason: string;
+        };
+        Update: {
+          adjustment_type?: string;
+          client_id?: string;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          inventory_id?: string | null;
+          new_value?: number;
+          notes?: string | null;
+          previous_value?: number;
+          product_id?: string;
+          quantity?: number;
+          reason?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "inventory_adjustments_client_id_fkey";
+            columns: ["client_id"];
+            isOneToOne: false;
+            referencedRelation: "clients";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inventory_adjustments_inventory_id_fkey";
+            columns: ["inventory_id"];
+            isOneToOne: false;
+            referencedRelation: "inventory";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "inventory_adjustments_product_id_fkey";
             columns: ["product_id"];
             isOneToOne: false;
             referencedRelation: "products";
@@ -1567,6 +1637,17 @@ export type Database = {
           p_processing_delta?: number;
           p_shipped_delta?: number;
           p_damaged_delta?: number;
+        };
+        Returns: undefined;
+      };
+      adjust_inventory_with_audit: {
+        Args: {
+          p_product_id: string;
+          p_client_id: string;
+          p_adjustment_type: string;
+          p_quantity: number;
+          p_reason: string;
+          p_notes?: string | null;
         };
         Returns: undefined;
       };

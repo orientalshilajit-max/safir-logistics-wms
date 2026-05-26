@@ -11,6 +11,7 @@ import {
   inputClassName,
   LoadingState,
   Panel,
+  textAreaClassName,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
@@ -19,7 +20,16 @@ type Product = Tables<"products"> & {
 };
 type InventoryRow = Pick<
   Tables<"inventory">,
-  "product_id" | "available_qty" | "reserved_qty" | "processing_qty" | "updated_at"
+  | "id"
+  | "client_id"
+  | "product_id"
+  | "expected_qty"
+  | "received_qty"
+  | "available_qty"
+  | "reserved_qty"
+  | "processing_qty"
+  | "storage_boxes"
+  | "updated_at"
 >;
 type IncomingProductLine = Pick<
   Tables<"incoming_items">,
@@ -36,6 +46,17 @@ type IncomingProductLine = Pick<
   } | null;
 };
 type RequestProductLine = Pick<Tables<"request_items">, "product_id">;
+type SortBy = "manual" | "stock" | "updated" | "customer" | "name";
+type SortDirection = "asc" | "desc";
+type AdjustmentType = "received_qty" | "expected_qty" | "reserved_qty" | "available_qty" | "storage_boxes";
+
+const adjustmentLabels: Record<AdjustmentType, string> = {
+  received_qty: "In Stock",
+  expected_qty: "Incoming",
+  reserved_qty: "Reserved",
+  available_qty: "Available",
+  storage_boxes: "Storage Boxes",
+};
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
@@ -45,14 +66,37 @@ export function ProductsClient() {
   const [requestLines, setRequestLines] = useState<RequestProductLine[]>([]);
   const [productQuery, setProductQuery] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("active");
+  const [adminClientFilter, setAdminClientFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<SortBy>("manual");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [adjustmentProduct, setAdjustmentProduct] = useState<Product | null>(null);
+  const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>("available_qty");
+  const [adjustmentQuantity, setAdjustmentQuantity] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
+  const isAdmin = role === "admin";
+
+  const clientOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+
+    products.forEach((product) => {
+      if (product.clients) {
+        byId.set(product.clients.id, product.clients.company_name);
+      }
+    });
+
+    return Array.from(byId.entries()).sort((first, second) => first[1].localeCompare(second[1]));
+  }, [products]);
 
   const filteredProducts = useMemo(() => {
     const productSearch = productQuery.trim().toLowerCase();
 
     return products.filter((product) => {
+      const matchesClient = !isAdmin || adminClientFilter === "all" || product.client_id === adminClientFilter;
       const matchesProduct =
         !productSearch ||
         product.product_name.toLowerCase().includes(productSearch) ||
@@ -60,9 +104,9 @@ export function ProductsClient() {
         (product.asin ?? "").toLowerCase().includes(productSearch) ||
         (product.barcode ?? "").toLowerCase().includes(productSearch);
 
-      return matchesProduct;
-    }).sort(compareProductsForDisplay);
-  }, [productQuery, products]);
+      return matchesClient && matchesProduct;
+    });
+  }, [adminClientFilter, isAdmin, productQuery, products]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -76,7 +120,7 @@ export function ProductsClient() {
       .order("created_at", { ascending: false });
     const inventoryQuery = supabase
       .from("inventory")
-      .select("product_id, available_qty, reserved_qty, processing_qty, updated_at")
+      .select("id, client_id, product_id, expected_qty, received_qty, available_qty, reserved_qty, processing_qty, storage_boxes, updated_at")
       .is("deleted_at", null);
     const incomingQuery = supabase
       .from("incoming_items")
@@ -222,7 +266,7 @@ export function ProductsClient() {
   }
 
   const displayProducts = useMemo(() => {
-    return filteredProducts.filter((product) => {
+    const nextProducts = filteredProducts.filter((product) => {
       const matchesStatus =
         clientStatusFilter === "all" ||
         (clientStatusFilter === "active" && product.active) ||
@@ -230,7 +274,11 @@ export function ProductsClient() {
 
       return matchesStatus;
     });
-  }, [clientStatusFilter, filteredProducts]);
+
+    return nextProducts.sort((first, second) =>
+      compareProducts(first, second, sortBy, sortDirection, inventoryRows),
+    );
+  }, [clientStatusFilter, filteredProducts, inventoryRows, sortBy, sortDirection]);
 
   const clientProductStats = useMemo(() => {
     return products.reduce(
@@ -262,6 +310,50 @@ export function ProductsClient() {
       ),
     [incomingLines, inventoryRows, products],
   );
+
+  function openAdjustmentModal(product: Product) {
+    setAdjustmentProduct(product);
+    setAdjustmentType("available_qty");
+    setAdjustmentQuantity("");
+    setAdjustmentReason("");
+    setAdjustmentNotes("");
+  }
+
+  async function saveInventoryAdjustment() {
+    if (!adjustmentProduct || adjusting) return;
+
+    const quantity = Number(adjustmentQuantity);
+
+    if (!Number.isInteger(quantity) || quantity === 0) {
+      setError("Adjustment quantity must be a non-zero whole number.");
+      return;
+    }
+
+    if (!adjustmentReason.trim()) {
+      setError("Adjustment reason is required.");
+      return;
+    }
+
+    setAdjusting(true);
+    setError(null);
+    const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
+      p_product_id: adjustmentProduct.id,
+      p_client_id: adjustmentProduct.client_id,
+      p_adjustment_type: adjustmentType,
+      p_quantity: quantity,
+      p_reason: adjustmentReason.trim(),
+      p_notes: adjustmentNotes.trim() || null,
+    });
+
+    if (adjustmentError) {
+      setError(adjustmentError.message);
+    } else {
+      setAdjustmentProduct(null);
+      await loadData();
+    }
+
+    setAdjusting(false);
+  }
 
   return (
     <div className="space-y-5">
@@ -298,7 +390,21 @@ export function ProductsClient() {
         </section>
         <Panel title="Products">
           <div className="mb-4 space-y-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]">
+            <div className={isAdmin ? "grid gap-3 lg:grid-cols-[12rem_minmax(0,1fr)_10rem_11rem_9rem]" : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]"}>
+                {isAdmin ? (
+                  <select
+                    className={inputClassName}
+                    value={adminClientFilter}
+                    onChange={(event) => setAdminClientFilter(event.target.value)}
+                  >
+                    <option value="all">All Clients</option>
+                    {clientOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <div className="relative">
                   <SearchIcon />
                   <input
@@ -317,6 +423,29 @@ export function ProductsClient() {
                   <option value="active">Active</option>
                   <option value="inactive">Archived</option>
                 </select>
+                {isAdmin ? (
+                  <>
+                    <select
+                      className={inputClassName}
+                      value={sortBy}
+                      onChange={(event) => setSortBy(event.target.value as SortBy)}
+                    >
+                      <option value="manual">Manual order</option>
+                      <option value="stock">Stock quantity</option>
+                      <option value="updated">Date updated</option>
+                      <option value="customer">Customer</option>
+                      <option value="name">Product name</option>
+                    </select>
+                    <select
+                      className={inputClassName}
+                      value={sortDirection}
+                      onChange={(event) => setSortDirection(event.target.value as SortDirection)}
+                    >
+                      <option value="asc">Ascending</option>
+                      <option value="desc">Descending</option>
+                    </select>
+                  </>
+                ) : null}
             </div>
           </div>
           {loading ? (
@@ -343,12 +472,30 @@ export function ProductsClient() {
                 isClientPortal={isClientPortal}
                 onArchiveProduct={archiveProduct}
                 onDeleteProduct={deleteProduct}
+                onAdjustProduct={openAdjustmentModal}
                 onMoveProduct={moveProduct}
               />
             </div>
           )}
         </Panel>
       </div>
+      {adjustmentProduct && isAdmin ? (
+        <InventoryAdjustmentModal
+          product={adjustmentProduct}
+          inventoryRow={inventoryRows.find((row) => row.product_id === adjustmentProduct.id) ?? null}
+          adjustmentType={adjustmentType}
+          quantity={adjustmentQuantity}
+          reason={adjustmentReason}
+          notes={adjustmentNotes}
+          saving={adjusting}
+          onAdjustmentTypeChange={setAdjustmentType}
+          onClose={() => setAdjustmentProduct(null)}
+          onNotesChange={setAdjustmentNotes}
+          onQuantityChange={setAdjustmentQuantity}
+          onReasonChange={setAdjustmentReason}
+          onSave={saveInventoryAdjustment}
+        />
+      ) : null}
     </div>
   );
 }
@@ -359,6 +506,7 @@ function ProductsTable({
   incomingLines,
   isClientPortal,
   onArchiveProduct,
+  onAdjustProduct,
   onDeleteProduct,
   onMoveProduct,
 }: {
@@ -367,6 +515,7 @@ function ProductsTable({
   incomingLines: IncomingProductLine[];
   isClientPortal: boolean;
   onArchiveProduct: (product: Product) => Promise<void>;
+  onAdjustProduct: (product: Product) => void;
   onDeleteProduct: (product: Product) => Promise<void>;
   onMoveProduct: (product: Product, direction: "up" | "down") => Promise<void>;
 }) {
@@ -382,7 +531,7 @@ function ProductsTable({
           <th className="w-20 px-2 py-2.5 text-center font-semibold">Incoming <SortMark /></th>
           <th className="w-20 px-2 py-2.5 text-center font-semibold">Reserved <SortMark /></th>
           <th className="w-24 px-2.5 py-2.5 font-semibold">Last Updated <SortMark /></th>
-          <th className="w-36 px-2.5 py-2.5 text-right font-semibold">Actions</th>
+          <th className="w-44 px-2.5 py-2.5 text-right font-semibold">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100">
@@ -427,6 +576,16 @@ function ProductsTable({
                   >
                     <ArrowDownIcon />
                   </button>
+                  {!isClientPortal ? (
+                    <button
+                      type="button"
+                      aria-label={`Adjust inventory for ${product.product_name}`}
+                      className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => onAdjustProduct(product)}
+                    >
+                      <InventoryEditIcon />
+                    </button>
+                  ) : null}
                   <Link
                     href={`/products/${product.id}/edit`}
                     aria-label={`Edit ${product.product_name}`}
@@ -457,6 +616,132 @@ function ProductsTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+function InventoryAdjustmentModal({
+  product,
+  inventoryRow,
+  adjustmentType,
+  quantity,
+  reason,
+  notes,
+  saving,
+  onAdjustmentTypeChange,
+  onClose,
+  onNotesChange,
+  onQuantityChange,
+  onReasonChange,
+  onSave,
+}: {
+  product: Product;
+  inventoryRow: InventoryRow | null;
+  adjustmentType: AdjustmentType;
+  quantity: string;
+  reason: string;
+  notes: string;
+  saving: boolean;
+  onAdjustmentTypeChange: (value: AdjustmentType) => void;
+  onClose: () => void;
+  onNotesChange: (value: string) => void;
+  onQuantityChange: (value: string) => void;
+  onReasonChange: (value: string) => void;
+  onSave: () => Promise<void>;
+}) {
+  const currentValues: Record<AdjustmentType, number> = {
+    available_qty: inventoryRow?.available_qty ?? 0,
+    expected_qty: inventoryRow?.expected_qty ?? 0,
+    received_qty: inventoryRow?.received_qty ?? 0,
+    reserved_qty: inventoryRow?.reserved_qty ?? 0,
+    storage_boxes: inventoryRow?.storage_boxes ?? 0,
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
+      <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-950">Adjust inventory</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {product.product_name}
+            {product.clients ? ` · ${product.clients.company_name}` : ""}
+          </p>
+        </div>
+        <div className="space-y-4 px-5 py-4">
+          <div className="grid gap-2 sm:grid-cols-5">
+            {Object.entries(adjustmentLabels).map(([key, label]) => (
+              <div key={key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-slate-950">
+                  {formatNumber(currentValues[key as AdjustmentType])}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjustment type</span>
+              <select
+                className={inputClassName}
+                value={adjustmentType}
+                onChange={(event) => onAdjustmentTypeChange(event.target.value as AdjustmentType)}
+              >
+                {Object.entries(adjustmentLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quantity adjustment</span>
+              <input
+                className={inputClassName}
+                inputMode="numeric"
+                placeholder="+50 or -12"
+                type="number"
+                value={quantity}
+                onChange={(event) => onQuantityChange(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</span>
+            <input
+              className={inputClassName}
+              placeholder="Inventory recount"
+              value={reason}
+              onChange={(event) => onReasonChange(event.target.value)}
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes optional</span>
+            <textarea
+              className={textAreaClassName}
+              value={notes}
+              onChange={(event) => onNotesChange(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            onClick={onClose}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            onClick={() => void onSave()}
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save adjustment"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -549,6 +834,48 @@ function compareProductsForDisplay(first: Product, second: Product) {
   }
 
   return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+}
+
+function compareProducts(
+  first: Product,
+  second: Product,
+  sortBy: SortBy,
+  sortDirection: SortDirection,
+  inventoryRows: InventoryRow[],
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+  let comparison = 0;
+
+  if (sortBy === "stock") {
+    comparison = getProductAvailableStock(first, inventoryRows) - getProductAvailableStock(second, inventoryRows);
+  } else if (sortBy === "updated") {
+    comparison = getProductUpdatedAt(first, inventoryRows).getTime() - getProductUpdatedAt(second, inventoryRows).getTime();
+  } else if (sortBy === "customer") {
+    comparison = (first.clients?.company_name ?? "").localeCompare(second.clients?.company_name ?? "");
+  } else if (sortBy === "name") {
+    comparison = first.product_name.localeCompare(second.product_name);
+  } else {
+    comparison = compareProductsForDisplay(first, second);
+  }
+
+  return comparison === 0 ? compareProductsForDisplay(first, second) : comparison * direction;
+}
+
+function getProductAvailableStock(product: Product, inventoryRows: InventoryRow[]) {
+  return inventoryRows
+    .filter((row) => row.product_id === product.id)
+    .reduce((sum, row) => sum + row.available_qty, 0);
+}
+
+function getProductUpdatedAt(product: Product, inventoryRows: InventoryRow[]) {
+  const inventoryUpdatedAt = inventoryRows
+    .filter((row) => row.product_id === product.id)
+    .map((row) => row.updated_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+
+  return new Date(inventoryUpdatedAt ?? product.updated_at);
 }
 
 function formatDateTime(value: string) {
@@ -654,6 +981,17 @@ function PencilIcon() {
     <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 20h9" />
       <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
+    </svg>
+  );
+}
+
+function InventoryEditIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 7h16" />
+      <path d="M4 17h16" />
+      <circle cx="8" cy="7" r="2" />
+      <circle cx="16" cy="17" r="2" />
     </svg>
   );
 }

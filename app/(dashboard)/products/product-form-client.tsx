@@ -13,11 +13,38 @@ import {
   inputClassName,
   LoadingState,
   Panel,
+  StatusBadge,
   textAreaClassName,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products">;
+type InventoryDetail = Pick<
+  Tables<"inventory">,
+  "available_qty" | "expected_qty" | "received_qty" | "reserved_qty" | "processing_qty" | "storage_boxes"
+>;
+type IncomingLineDetail = Pick<
+  Tables<"incoming_items">,
+  "expected_quantity" | "received_quantity" | "inventory_posted_at" | "shipment_id"
+> & {
+  incoming_shipments: (Pick<Tables<"incoming_shipments">, "created_at" | "number_of_boxes" | "tracking_numbers"> & {
+    statuses: Pick<Tables<"statuses">, "name"> | null;
+  }) | null;
+};
+type RequestLineDetail = Pick<Tables<"request_items">, "requested_quantity"> & {
+  service_requests: Pick<Tables<"service_requests">, "created_at" | "request_number" | "status"> | null;
+};
+type InventoryAdjustment = Pick<
+  Tables<"inventory_adjustments">,
+  "adjustment_type" | "created_at" | "new_value" | "notes" | "previous_value" | "quantity" | "reason"
+>;
+type AdjustmentType = "received_qty" | "expected_qty" | "reserved_qty" | "available_qty" | "storage_boxes";
+type AdminProductDetail = {
+  adjustments: InventoryAdjustment[];
+  incomingLines: IncomingLineDetail[];
+  inventory: InventoryDetail | null;
+  requestLines: RequestLineDetail[];
+};
 type ProductForm = {
   client_id: string;
   product_name: string;
@@ -44,6 +71,14 @@ const emptyForm: ProductForm = {
   active: true,
 };
 
+const adjustmentLabels: Record<AdjustmentType, string> = {
+  received_qty: "In Stock",
+  expected_qty: "Incoming",
+  reserved_qty: "Reserved",
+  available_qty: "Available",
+  storage_boxes: "Storage Boxes",
+};
+
 export function ProductFormClient({ productId }: { productId?: string }) {
   const router = useRouter();
   const { role, clientId } = useAuth();
@@ -51,6 +86,13 @@ export function ProductFormClient({ productId }: { productId?: string }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [adminDetail, setAdminDetail] = useState<AdminProductDetail | null>(null);
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>("available_qty");
+  const [adjustmentQuantity, setAdjustmentQuantity] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [adjustmentNotes, setAdjustmentNotes] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,8 +151,53 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       setForm((current) => ({ ...current, client_id: clientId }));
     }
 
+    if (productId && role === "admin") {
+      const [inventoryResult, incomingResult, requestResult, adjustmentsResult] = await Promise.all([
+        supabase
+          .from("inventory")
+          .select("available_qty, expected_qty, received_qty, reserved_qty, processing_qty, storage_boxes")
+          .eq("product_id", productId)
+          .is("deleted_at", null)
+          .maybeSingle(),
+        supabase
+          .from("incoming_items")
+          .select("expected_quantity, received_quantity, inventory_posted_at, shipment_id, incoming_shipments(created_at, number_of_boxes, tracking_numbers, statuses(name))")
+          .eq("product_id", productId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("request_items")
+          .select("requested_quantity, service_requests(created_at, request_number, status)")
+          .eq("product_id", productId)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("inventory_adjustments")
+          .select("adjustment_type, created_at, new_value, notes, previous_value, quantity, reason")
+          .eq("product_id", productId)
+          .order("created_at", { ascending: false })
+          .limit(8),
+      ]);
+
+      if (inventoryResult.error) setError(inventoryResult.error.message);
+      if (incomingResult.error) setError(incomingResult.error.message);
+      if (requestResult.error) setError(requestResult.error.message);
+      if (adjustmentsResult.error) setError(adjustmentsResult.error.message);
+
+      setAdminDetail({
+        adjustments: (adjustmentsResult.data ?? []) as InventoryAdjustment[],
+        incomingLines: (incomingResult.data ?? []) as IncomingLineDetail[],
+        inventory: (inventoryResult.data as InventoryDetail | null) ?? null,
+        requestLines: (requestResult.data ?? []) as RequestLineDetail[],
+      });
+    } else {
+      setAdminDetail(null);
+    }
+
     setLoading(false);
-  }, [clientId, isClientPortal, productId]);
+  }, [clientId, isClientPortal, productId, role]);
 
   useEffect(() => {
     let active = true;
@@ -193,6 +280,50 @@ export function ProductFormClient({ productId }: { productId?: string }) {
 
     router.push("/products");
     router.refresh();
+  }
+
+  function openAdjustmentModal() {
+    setAdjustmentOpen(true);
+    setAdjustmentType("available_qty");
+    setAdjustmentQuantity("");
+    setAdjustmentReason("");
+    setAdjustmentNotes("");
+  }
+
+  async function saveInventoryAdjustment() {
+    if (!productId || adjusting) return;
+
+    const quantity = Number(adjustmentQuantity);
+
+    if (!Number.isInteger(quantity) || quantity === 0) {
+      setError("Adjustment quantity must be a non-zero whole number.");
+      return;
+    }
+
+    if (!adjustmentReason.trim()) {
+      setError("Adjustment reason is required.");
+      return;
+    }
+
+    setAdjusting(true);
+    setError(null);
+    const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
+      p_adjustment_type: adjustmentType,
+      p_client_id: form.client_id,
+      p_notes: adjustmentNotes.trim() || null,
+      p_product_id: productId,
+      p_quantity: quantity,
+      p_reason: adjustmentReason.trim(),
+    });
+
+    if (adjustmentError) {
+      setError(adjustmentError.message);
+    } else {
+      setAdjustmentOpen(false);
+      await loadData();
+    }
+
+    setAdjusting(false);
   }
 
   if (loading) {
@@ -295,8 +426,278 @@ export function ProductFormClient({ productId }: { productId?: string }) {
           </div>
         </form>
       </Panel>
+      {productId && role === "admin" && adminDetail ? (
+        <AdminProductDetailPanel detail={adminDetail} onAdjust={openAdjustmentModal} />
+      ) : null}
+      {productId && role === "admin" && adminDetail && adjustmentOpen ? (
+        <InventoryAdjustmentModal
+          adjustmentType={adjustmentType}
+          inventory={adminDetail.inventory}
+          notes={adjustmentNotes}
+          onAdjustmentTypeChange={setAdjustmentType}
+          onClose={() => setAdjustmentOpen(false)}
+          onNotesChange={setAdjustmentNotes}
+          onQuantityChange={setAdjustmentQuantity}
+          onReasonChange={setAdjustmentReason}
+          onSave={saveInventoryAdjustment}
+          quantity={adjustmentQuantity}
+          reason={adjustmentReason}
+          saving={adjusting}
+        />
+      ) : null}
     </div>
   );
+}
+
+function AdminProductDetailPanel({ detail, onAdjust }: { detail: AdminProductDetail; onAdjust: () => void }) {
+  const inventory = detail.inventory;
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <Panel title="Inventory totals">
+        <div className="mb-3 flex justify-end">
+          <button
+            type="button"
+            className="inline-flex h-8 items-center justify-center rounded-md bg-blue-600 px-3 text-xs font-medium text-white transition hover:bg-blue-700"
+            onClick={onAdjust}
+          >
+            Adjust inventory
+          </button>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <DetailMetric label="In Stock" value={inventory?.received_qty ?? 0} />
+          <DetailMetric label="Available" value={inventory?.available_qty ?? 0} />
+          <DetailMetric label="Reserved" value={inventory?.reserved_qty ?? 0} />
+          <DetailMetric label="Incoming" value={inventory?.expected_qty ?? 0} />
+          <DetailMetric label="In Process" value={inventory?.processing_qty ?? 0} />
+          <DetailMetric label="Storage Boxes" value={inventory?.storage_boxes ?? 0} />
+        </div>
+      </Panel>
+      <Panel title="Inventory adjustment history">
+        <CompactList
+          emptyLabel="No inventory adjustments yet."
+          rows={detail.adjustments.map((adjustment) => ({
+            key: `${adjustment.created_at}-${adjustment.adjustment_type}`,
+            left: adjustment.reason,
+            middle: `${formatSignedNumber(adjustment.quantity)} ${formatAdjustmentType(adjustment.adjustment_type)}`,
+            right: formatShortDate(adjustment.created_at),
+            sub: `${formatNumber(adjustment.previous_value)} → ${formatNumber(adjustment.new_value)}${adjustment.notes ? ` · ${adjustment.notes}` : ""}`,
+          }))}
+        />
+      </Panel>
+      <Panel title="Recent incoming shipments">
+        <CompactList
+          emptyLabel="No recent incoming shipment history."
+          rows={detail.incomingLines.map((line) => ({
+            key: line.shipment_id,
+            left: line.incoming_shipments?.tracking_numbers?.[0] ?? "Shipment",
+            middle: `${formatNumber(line.expected_quantity)} expected`,
+            right: line.incoming_shipments?.statuses?.name ?? "In Transit",
+            sub: `${formatNumber(line.received_quantity)} received · ${line.incoming_shipments?.number_of_boxes ?? 0} boxes · ${formatShortDate(line.incoming_shipments?.created_at)}`,
+          }))}
+        />
+      </Panel>
+      <Panel title="Recent service requests">
+        <CompactList
+          emptyLabel="No recent service requests."
+          rows={detail.requestLines.map((line) => ({
+            key: line.service_requests?.request_number ?? `${line.requested_quantity}-${line.service_requests?.created_at}`,
+            left: line.service_requests?.request_number ?? "Request",
+            middle: `${formatNumber(line.requested_quantity)} units`,
+            right: line.service_requests?.status ?? "Draft",
+            sub: formatShortDate(line.service_requests?.created_at),
+          }))}
+        />
+      </Panel>
+    </div>
+  );
+}
+
+function InventoryAdjustmentModal({
+  adjustmentType,
+  inventory,
+  notes,
+  quantity,
+  reason,
+  saving,
+  onAdjustmentTypeChange,
+  onClose,
+  onNotesChange,
+  onQuantityChange,
+  onReasonChange,
+  onSave,
+}: {
+  adjustmentType: AdjustmentType;
+  inventory: InventoryDetail | null;
+  notes: string;
+  quantity: string;
+  reason: string;
+  saving: boolean;
+  onAdjustmentTypeChange: (value: AdjustmentType) => void;
+  onClose: () => void;
+  onNotesChange: (value: string) => void;
+  onQuantityChange: (value: string) => void;
+  onReasonChange: (value: string) => void;
+  onSave: () => Promise<void>;
+}) {
+  const currentValues: Record<AdjustmentType, number> = {
+    available_qty: inventory?.available_qty ?? 0,
+    expected_qty: inventory?.expected_qty ?? 0,
+    received_qty: inventory?.received_qty ?? 0,
+    reserved_qty: inventory?.reserved_qty ?? 0,
+    storage_boxes: inventory?.storage_boxes ?? 0,
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6">
+      <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-950">Adjust inventory</h3>
+          <p className="mt-1 text-sm text-slate-500">Changes are saved with an audit trail.</p>
+        </div>
+        <div className="space-y-4 px-5 py-4">
+          <div className="grid gap-2 sm:grid-cols-5">
+            {Object.entries(adjustmentLabels).map(([key, label]) => (
+              <div key={key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                <p className="mt-1 text-lg font-semibold tabular-nums text-slate-950">
+                  {formatNumber(currentValues[key as AdjustmentType])}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjustment type</span>
+              <select
+                className={inputClassName}
+                value={adjustmentType}
+                onChange={(event) => onAdjustmentTypeChange(event.target.value as AdjustmentType)}
+              >
+                {Object.entries(adjustmentLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quantity adjustment</span>
+              <input
+                className={inputClassName}
+                inputMode="numeric"
+                placeholder="+50 or -12"
+                type="number"
+                value={quantity}
+                onChange={(event) => onQuantityChange(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</span>
+            <input
+              className={inputClassName}
+              placeholder="Inventory recount"
+              value={reason}
+              onChange={(event) => onReasonChange(event.target.value)}
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes optional</span>
+            <textarea className={textAreaClassName} value={notes} onChange={(event) => onNotesChange(event.target.value)} />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            onClick={onClose}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-9 items-center justify-center rounded-md bg-blue-600 px-3.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+            onClick={() => void onSave()}
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save adjustment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-[0.68rem] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-xl font-semibold tabular-nums text-slate-950">{formatNumber(value)}</p>
+    </div>
+  );
+}
+
+function CompactList({
+  emptyLabel,
+  rows,
+}: {
+  emptyLabel: string;
+  rows: Array<{ key: string; left: string; middle: string; right: string; sub: string }>;
+}) {
+  if (rows.length === 0) {
+    return <p className="text-sm text-slate-500">{emptyLabel}</p>;
+  }
+
+  return (
+    <div className="divide-y divide-slate-100 rounded-md border border-slate-200">
+      {rows.map((row) => (
+        <div key={row.key} className="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_7rem_8rem] sm:items-center">
+          <div className="min-w-0">
+            <p className="truncate font-medium text-slate-950">{row.left}</p>
+            <p className="mt-0.5 truncate text-xs text-slate-500">{row.sub}</p>
+          </div>
+          <p className="text-slate-600">{row.middle}</p>
+          <StatusBadge tone={statusTone(row.right)}>{row.right}</StatusBadge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function statusTone(status: string): "slate" | "emerald" | "blue" | "amber" | "rose" | "orange" | "indigo" | "cyan" {
+  if (["Completed", "Received", "Paid"].includes(status)) return "emerald";
+  if (["Issue", "Rejected", "Cancelled", "Issue / On Hold"].includes(status)) return "rose";
+  if (["Approved", "In Progress", "Ready to Ship", "Shipped"].includes(status)) return "blue";
+  if (["Pending Approval", "Arrived at Prep", "Waiting Labels"].includes(status)) return "orange";
+  return "slate";
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en").format(value);
+}
+
+function formatSignedNumber(value: number) {
+  return value > 0 ? `+${formatNumber(value)}` : formatNumber(value);
+}
+
+function formatAdjustmentType(value: string) {
+  return value
+    .replace("_qty", "")
+    .replace("_boxes", " boxes")
+    .replace(/_/g, " ");
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 async function uploadProductImage(file: File, clientId: string): Promise<{ url: string | null; error: string | null }> {
