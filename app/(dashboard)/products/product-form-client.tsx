@@ -18,14 +18,9 @@ import {
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products">;
-type Status = Pick<Tables<"statuses">, "id" | "name">;
 type ProductForm = {
   client_id: string;
   product_name: string;
-  quantity_items: string;
-  quantity_boxes: string;
-  tracking_number: string;
-  carrier: string;
   sku: string;
   fnsku: string;
   asin: string;
@@ -39,10 +34,6 @@ type ProductForm = {
 const emptyForm: ProductForm = {
   client_id: "",
   product_name: "",
-  quantity_items: "1",
-  quantity_boxes: "1",
-  tracking_number: "",
-  carrier: "",
   sku: "",
   fnsku: "",
   asin: "",
@@ -58,7 +49,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
   const { role, clientId } = useAuth();
   const isClientPortal = role === "client";
   const [clients, setClients] = useState<Client[]>([]);
-  const [statuses, setStatuses] = useState<Status[]>([]);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,13 +64,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
         .select("id, company_name")
         .is("deleted_at", null)
         .order("company_name");
-    const statusesQuery = supabase
-      .from("statuses")
-      .select("id, name")
-      .eq("category", "incoming_shipment")
-      .eq("active", true)
-      .is("deleted_at", null)
-      .order("sort_order");
     const productQuery =
       productId
         ? supabase
@@ -95,9 +78,8 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       clientsQuery.eq("id", clientId);
     }
 
-    const [clientsResult, statusesResult, productResult] = await Promise.all([
+    const [clientsResult, productResult] = await Promise.all([
       isClientPortal ? Promise.resolve({ data: [], error: null }) : clientsQuery,
-      statusesQuery,
       productQuery,
     ]);
 
@@ -107,12 +89,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       setClients(clientsResult.data ?? []);
     }
 
-    if (statusesResult.error) {
-      setError(statusesResult.error.message);
-    } else {
-      setStatuses(statusesResult.data ?? []);
-    }
-
     if (productResult.error) {
       setError(productResult.error.message);
     } else if (productResult.data) {
@@ -120,10 +96,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       setForm({
         client_id: product.client_id,
         product_name: product.product_name,
-        quantity_items: "1",
-        quantity_boxes: "1",
-        tracking_number: "",
-        carrier: "",
         sku: product.sku ?? "",
         fnsku: product.fnsku ?? "",
         asin: product.asin ?? "",
@@ -166,19 +138,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       return;
     }
 
-    const quantityItems = Number(form.quantity_items);
-    const quantityBoxes = Number(form.quantity_boxes);
-
-    if (isClientPortal && (!Number.isInteger(quantityItems) || quantityItems <= 0)) {
-      setError("Quantity of items must be a whole number greater than 0.");
-      return;
-    }
-
-    if (isClientPortal && (!Number.isInteger(quantityBoxes) || quantityBoxes < 0)) {
-      setError("Quantity of boxes must be a whole number zero or greater.");
-      return;
-    }
-
     setSaving(true);
     setError(null);
 
@@ -217,73 +176,6 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       setError(result.error.message);
       setSaving(false);
       return;
-    }
-
-    if (isClientPortal && !productId) {
-      const productIdValue = "data" in result ? result.data?.id : null;
-      const inTransitStatus =
-        statuses.find((status) => status.name === "In Transit") ??
-        statuses.find((status) => status.name === "Expected") ??
-        statuses[0];
-
-      if (!productIdValue || !inTransitStatus) {
-        setError("Unable to create inbound product record.");
-        setSaving(false);
-        return;
-      }
-
-      const trackingNumbers = form.tracking_number.trim() ? [form.tracking_number.trim()] : [];
-      const carrier = form.carrier.trim() || "Client supplied";
-      const shipmentResult = await supabase
-        .from("incoming_shipments")
-        .insert({
-          client_id: form.client_id,
-          carrier,
-          tracking_numbers: trackingNumbers,
-          number_of_boxes: quantityBoxes,
-          status_id: inTransitStatus.id,
-          notes: form.notes.trim() || null,
-        })
-        .select("id")
-        .single();
-
-      if (shipmentResult.error || !shipmentResult.data) {
-        setError(shipmentResult.error?.message ?? "Unable to create inbound shipment.");
-        setSaving(false);
-        return;
-      }
-
-      const trackingNumber = trackingNumbers[0] ?? `Manual-${shipmentResult.data.id.slice(0, 8)}`;
-      const { data: trackingBox, error: trackingBoxError } = await supabase
-        .from("incoming_tracking_boxes")
-        .insert({
-          shipment_id: shipmentResult.data.id,
-          tracking_number: trackingNumber,
-          carrier,
-          status: "In Transit",
-        })
-        .select("id")
-        .single();
-
-      if (trackingBoxError) {
-        setError(trackingBoxError.message);
-        setSaving(false);
-        return;
-      }
-
-      const { error: itemError } = await supabase.from("incoming_items").insert({
-        shipment_id: shipmentResult.data.id,
-        product_id: productIdValue,
-        tracking_box_id: trackingBox.id,
-        expected_quantity: quantityItems,
-        notes: form.notes.trim() || null,
-      });
-
-      if (itemError) {
-        setError(itemError.message);
-        setSaving(false);
-        return;
-      }
     }
 
     router.push("/products");
@@ -357,55 +249,29 @@ export function ProductFormClient({ productId }: { productId?: string }) {
               </div>
             </div>
           </Field>
-          {isClientPortal ? (
-            <>
-              <Field label="Quantity of items">
-                <input className={inputClassName} min="1" required type="number" value={form.quantity_items} onChange={(event) => setForm({ ...form, quantity_items: event.target.value })} />
-              </Field>
-              <Field label="Quantity of boxes">
-                <input className={inputClassName} min="0" required type="number" value={form.quantity_boxes} onChange={(event) => setForm({ ...form, quantity_boxes: event.target.value })} />
-              </Field>
-              <Field label="Tracking number">
-                <input className={inputClassName} value={form.tracking_number} onChange={(event) => setForm({ ...form, tracking_number: event.target.value })} />
-              </Field>
-              <Field label="Carrier">
-                <input className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
-              </Field>
-            </>
-          ) : null}
-          {isClientPortal ? null : (
-            <>
-              <Field label="SKU">
-                <input className={inputClassName} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
-              </Field>
-              <Field label="FNSKU">
-                <input className={inputClassName} value={form.fnsku} onChange={(event) => setForm({ ...form, fnsku: event.target.value })} />
-              </Field>
-              <Field label="ASIN">
-                <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
-              </Field>
-              <Field label="Barcode">
-                <input className={inputClassName} value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} />
-              </Field>
-              <Field label="Barcode type">
-                <input className={inputClassName} placeholder="Code 128, UPC, QR" value={form.barcode_type} onChange={(event) => setForm({ ...form, barcode_type: event.target.value })} />
-              </Field>
-              <Field label="Photo URL">
-                <input className={inputClassName} value={form.photo_url} onChange={(event) => setForm({ ...form, photo_url: event.target.value })} />
-              </Field>
-            </>
-          )}
+          <Field label="SKU optional">
+            <input className={inputClassName} value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} />
+          </Field>
+          <Field label="ASIN optional">
+            <input className={inputClassName} value={form.asin} onChange={(event) => setForm({ ...form, asin: event.target.value })} />
+          </Field>
+          <Field label="UPC optional">
+            <input className={inputClassName} value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} />
+          </Field>
+          <Field label="FNSKU optional">
+            <input className={inputClassName} value={form.fnsku} onChange={(event) => setForm({ ...form, fnsku: event.target.value })} />
+          </Field>
           <div className="lg:col-span-2">
             <Field label="Notes">
               <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
             </Field>
           </div>
-          {isClientPortal ? null : (
-            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 lg:col-span-2">
-              <input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />
-              Active product
-            </label>
-          )}
+          <Field label="Status">
+            <select className={inputClassName} value={form.active ? "active" : "inactive"} onChange={(event) => setForm({ ...form, active: event.target.value === "active" })}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </Field>
           <div className="flex gap-2 lg:col-span-2">
             <Button type="submit" disabled={saving || (!isClientPortal && clients.length === 0)}>
               {saving ? "Saving..." : "Save product"}

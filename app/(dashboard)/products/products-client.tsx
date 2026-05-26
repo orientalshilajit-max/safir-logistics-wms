@@ -159,14 +159,17 @@ export function ProductsClient() {
   const displayProducts = useMemo(() => {
     return filteredProducts.filter((product) => {
       const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-      const status = getProductTableStatus(product, summary);
-      const matchesStatus = clientStatusFilter === "all" || status === clientStatusFilter;
+      const stockStatus = getCalculatedStockStatus(summary);
+      const matchesStatus =
+        clientStatusFilter === "all" ||
+        (clientStatusFilter === "active" && product.active) ||
+        (clientStatusFilter === "inactive" && !product.active);
       const matchesStock =
         stockStatusFilter === "all" ||
         (stockStatusFilter === "in_stock" && summary.inStock > 0) ||
         (stockStatusFilter === "incoming" && summary.incomingUnits > 0) ||
         (stockStatusFilter === "reserved" && summary.reservedUnits > 0) ||
-        (stockStatusFilter === "out_of_stock" && summary.inStock === 0);
+        (stockStatusFilter === "no_stock" && stockStatus === "No Stock");
 
       return matchesStatus && matchesStock;
     });
@@ -254,10 +257,8 @@ export function ProductsClient() {
                   onChange={(event) => setClientStatusFilter(event.target.value)}
                 >
                   <option value="all">Status: All</option>
-                  <option value="Active">Active</option>
-                  <option value="Low Stock">Low Stock</option>
-                  <option value="Incoming">Incoming</option>
-                  <option value="Inactive">Inactive</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
                 </select>
                 <select
                   className={inputClassName}
@@ -268,7 +269,7 @@ export function ProductsClient() {
                   <option value="in_stock">In stock</option>
                   <option value="incoming">Incoming</option>
                   <option value="reserved">Reserved</option>
-                  <option value="out_of_stock">Out of stock</option>
+                  <option value="no_stock">No stock</option>
                 </select>
                 <button
                   type="button"
@@ -350,7 +351,7 @@ function ProductsTable({
   onDeleteProduct: (product: Product) => Promise<void>;
 }) {
   return (
-    <table className="w-full min-w-[1160px] text-left text-sm tabular-nums">
+    <table className="w-full min-w-[1260px] text-left text-sm tabular-nums">
       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs font-medium text-slate-500 backdrop-blur">
         <tr>
           <th className="w-10 px-4 py-3">
@@ -359,11 +360,12 @@ function ProductsTable({
           <th className="px-4 py-3 font-semibold">Product</th>
           <th className="px-4 py-3 font-semibold">SKU <SortMark /></th>
           <th className="px-4 py-3 font-semibold">ASIN / UPC <SortMark /></th>
+          <th className="px-4 py-3 font-semibold">FNSKU <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">In Stock (Units) <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">Incoming (Units) <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">Reserved (Units) <SortMark /></th>
+          <th className="px-4 py-3 font-semibold">Stock Status</th>
           <th className="px-4 py-3 font-semibold">Last Updated <SortMark /></th>
-          <th className="px-4 py-3 font-semibold">Status</th>
           <th className="px-4 py-3 text-right font-semibold">Actions</th>
         </tr>
       </thead>
@@ -389,16 +391,17 @@ function ProductsTable({
               </td>
               <td className="px-3 py-2.5 text-slate-600">{product.sku ?? "-"}</td>
               <td className="px-3 py-2.5 text-slate-600">{product.asin ?? product.barcode ?? "-"}</td>
+              <td className="px-3 py-2.5 text-slate-600">{product.fnsku ?? "-"}</td>
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.inStock)}</td>
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.incomingUnits)}</td>
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.reservedUnits)}</td>
-              <td className="px-3 py-2.5 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-3 py-2.5">
                 {(() => {
-                  const status = getProductTableStatus(product, summary);
-                  return <StatusBadge tone={productTableStatusTone(status)}>{status}</StatusBadge>;
+                  const status = getCalculatedStockStatus(summary);
+                  return <StatusBadge tone={calculatedStockStatusTone(status)}>{status}</StatusBadge>;
                 })()}
               </td>
+              <td className="px-3 py-2.5 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-3 py-2.5">
                 <div className="flex justify-end gap-1.5">
                   <Link
@@ -499,10 +502,6 @@ function getClientProductSummary(
   const incomingQty = productIncoming
     .filter((line) => !line.inventory_posted_at)
     .reduce((sum, line) => sum + line.expected_quantity, 0);
-  const boxes = productIncoming.reduce((sum, line) => {
-    return sum + (line.incoming_shipments?.number_of_boxes ?? 0);
-  }, 0);
-  const status = getClientProductStatus(availableQty, productIncoming);
   const lastUpdated = productInventory
     .map((row) => row.updated_at)
     .filter(Boolean)
@@ -510,62 +509,24 @@ function getClientProductSummary(
     .at(-1);
 
   return {
-    boxes,
     incomingUnits: incomingQty,
     inStock: availableQty,
     lastUpdated,
     reservedUnits: reservedQty,
-    status,
   };
 }
 
-function getClientProductStatus(
-  availableQty: number,
-  incomingLines: IncomingProductLine[],
-) {
-  if (
-    incomingLines.some(
-      (line) =>
-        line.is_unexpected ||
-        (line.inventory_posted_at && line.expected_quantity !== line.received_quantity) ||
-        line.incoming_shipments?.statuses?.name === "Issue" ||
-        line.incoming_shipments?.statuses?.name === "Received with Discrepancy",
-    )
-  ) {
-    return "Issue";
-  }
-
-  if (availableQty > 0) {
-    return "Available";
-  }
-
-  if (
-    incomingLines.some((line) =>
-      ["Arrived at Prep", "Pending Receiving", "Partially Received"].includes(
-        line.incoming_shipments?.statuses?.name ?? "",
-      ),
-    )
-  ) {
-    return "Receiving";
-  }
-
-  return "In Transit";
+function getCalculatedStockStatus(summary: ReturnType<typeof getClientProductSummary>) {
+  if (summary.inStock > 0) return "In Stock";
+  if (summary.incomingUnits > 0) return "Incoming";
+  if (summary.reservedUnits > 0) return "Reserved";
+  return "No Stock";
 }
 
-function getProductTableStatus(
-  product: Product,
-  summary: ReturnType<typeof getClientProductSummary>,
-) {
-  if (!product.active) return "Inactive";
-  if (summary.inStock > 0 && summary.inStock <= 10) return "Low Stock";
-  if (summary.inStock === 0 && summary.incomingUnits > 0) return "Incoming";
-  return "Active";
-}
-
-function productTableStatusTone(status: string) {
-  if (status === "Active") return "emerald";
-  if (status === "Low Stock") return "orange";
+function calculatedStockStatusTone(status: string) {
+  if (status === "In Stock") return "emerald";
   if (status === "Incoming") return "blue";
+  if (status === "Reserved") return "orange";
   return "slate";
 }
 
