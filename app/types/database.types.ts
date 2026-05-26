@@ -779,6 +779,7 @@ export type Database = {
           notes: string | null;
           photo_url: string | null;
           product_name: string;
+          sort_order: number;
           sku: string | null;
           updated_at: string;
         };
@@ -795,6 +796,7 @@ export type Database = {
           notes?: string | null;
           photo_url?: string | null;
           product_name: string;
+          sort_order?: number;
           sku?: string | null;
           updated_at?: string;
         };
@@ -811,6 +813,7 @@ export type Database = {
           notes?: string | null;
           photo_url?: string | null;
           product_name?: string;
+          sort_order?: number;
           sku?: string | null;
           updated_at?: string;
         };

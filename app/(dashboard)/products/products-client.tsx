@@ -43,43 +43,26 @@ export function ProductsClient() {
   const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
   const [incomingLines, setIncomingLines] = useState<IncomingProductLine[]>([]);
   const [requestLines, setRequestLines] = useState<RequestProductLine[]>([]);
-  const [clientFilter, setClientFilter] = useState("all");
   const [productQuery, setProductQuery] = useState("");
-  const [asinQuery, setAsinQuery] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("active");
-  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
 
-  const clientOptions = useMemo(() => {
-    const byId = new Map<string, string>();
-    products.forEach((product) => {
-      if (product.clients) {
-        byId.set(product.clients.id, product.clients.company_name);
-      }
-    });
-
-    return Array.from(byId.entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  }, [products]);
-
   const filteredProducts = useMemo(() => {
     const productSearch = productQuery.trim().toLowerCase();
-    const asinSearch = asinQuery.trim().toLowerCase();
 
     return products.filter((product) => {
-      const matchesClient = clientFilter === "all" || product.client_id === clientFilter;
       const matchesProduct =
         !productSearch ||
         product.product_name.toLowerCase().includes(productSearch) ||
         (product.sku ?? "").toLowerCase().includes(productSearch) ||
         (product.asin ?? "").toLowerCase().includes(productSearch) ||
         (product.barcode ?? "").toLowerCase().includes(productSearch);
-      const matchesAsin = !asinSearch || (product.asin ?? "").toLowerCase().includes(asinSearch);
 
-      return matchesClient && matchesProduct && matchesAsin;
-    });
-  }, [asinQuery, clientFilter, productQuery, products]);
+      return matchesProduct;
+    }).sort(compareProductsForDisplay);
+  }, [productQuery, products]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -89,7 +72,8 @@ export function ProductsClient() {
       .from("products")
       .select("*, clients(id, company_name)")
       .is("deleted_at", null)
-      .order("product_name");
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: false });
     const inventoryQuery = supabase
       .from("inventory")
       .select("product_id, available_qty, reserved_qty, processing_qty, updated_at")
@@ -201,6 +185,42 @@ export function ProductsClient() {
     }
   }
 
+  async function moveProduct(product: Product, direction: "up" | "down") {
+    setError(null);
+    const siblings = products
+      .filter((candidate) => candidate.client_id === product.client_id)
+      .sort(compareProductsForDisplay);
+    const currentIndex = siblings.findIndex((candidate) => candidate.id === product.id);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length) {
+      return;
+    }
+
+    const reordered = [...siblings];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+
+    const updates = reordered.map((candidate, index) =>
+      supabase.from("products").update({ sort_order: index + 1 }).eq("id", candidate.id),
+    );
+    const results = await Promise.all(updates);
+    const failedUpdate = results.find((result) => result.error);
+
+    if (failedUpdate?.error) {
+      setError(failedUpdate.error.message);
+      return;
+    }
+
+    setProducts((currentProducts) =>
+      currentProducts
+        .map((candidate) => {
+          const nextIndex = reordered.findIndex((orderedProduct) => orderedProduct.id === candidate.id);
+          return nextIndex >= 0 ? { ...candidate, sort_order: nextIndex + 1 } : candidate;
+        })
+        .sort(compareProductsForDisplay),
+    );
+  }
+
   const displayProducts = useMemo(() => {
     return filteredProducts.filter((product) => {
       const matchesStatus =
@@ -278,7 +298,7 @@ export function ProductsClient() {
         </section>
         <Panel title="Products">
           <div className="mb-4 space-y-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_10rem]">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]">
                 <div className="relative">
                   <SearchIcon />
                   <input
@@ -293,43 +313,11 @@ export function ProductsClient() {
                   value={clientStatusFilter}
                   onChange={(event) => setClientStatusFilter(event.target.value)}
                 >
+                  <option value="all">All Products</option>
                   <option value="active">Active</option>
-                  <option value="all">All</option>
                   <option value="inactive">Archived</option>
                 </select>
-                <button
-                  type="button"
-                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  onClick={() => setShowMoreFilters((current) => !current)}
-                >
-                  <FilterIcon />
-                  More Filters
-                </button>
             </div>
-            {showMoreFilters ? (
-              <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/70 p-3 lg:grid-cols-2">
-                {isClientPortal ? null : (
-                  <select
-                    className={inputClassName}
-                    value={clientFilter}
-                    onChange={(event) => setClientFilter(event.target.value)}
-                  >
-                    <option value="all">All clients</option>
-                    {clientOptions.map(([id, name]) => (
-                      <option key={id} value={id}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <input
-                  className={inputClassName}
-                  placeholder="Filter by ASIN"
-                  value={asinQuery}
-                  onChange={(event) => setAsinQuery(event.target.value)}
-                />
-              </div>
-            ) : null}
           </div>
           {loading ? (
             <LoadingState label="Loading products..." />
@@ -355,6 +343,7 @@ export function ProductsClient() {
                 isClientPortal={isClientPortal}
                 onArchiveProduct={archiveProduct}
                 onDeleteProduct={deleteProduct}
+                onMoveProduct={moveProduct}
               />
             </div>
           )}
@@ -371,6 +360,7 @@ function ProductsTable({
   isClientPortal,
   onArchiveProduct,
   onDeleteProduct,
+  onMoveProduct,
 }: {
   products: Product[];
   inventoryRows: InventoryRow[];
@@ -378,15 +368,13 @@ function ProductsTable({
   isClientPortal: boolean;
   onArchiveProduct: (product: Product) => Promise<void>;
   onDeleteProduct: (product: Product) => Promise<void>;
+  onMoveProduct: (product: Product, direction: "up" | "down") => Promise<void>;
 }) {
   return (
     <table className="w-full min-w-[1040px] table-fixed text-left text-sm tabular-nums">
       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
         <tr>
-          <th className="w-9 px-2.5 py-2.5">
-            <input type="checkbox" aria-label="Select all products" className="size-4 rounded border-slate-300" />
-          </th>
-          <th className="w-[22rem] px-2.5 py-2.5 font-semibold">Product</th>
+          <th className="w-[16rem] px-2.5 py-2.5 font-semibold">Product</th>
           <th className="w-24 px-2.5 py-2.5 font-semibold">SKU <SortMark /></th>
           <th className="w-28 px-2.5 py-2.5 font-semibold">ASIN / UPC <SortMark /></th>
           <th className="w-24 px-2.5 py-2.5 font-semibold">FNSKU <SortMark /></th>
@@ -394,7 +382,7 @@ function ProductsTable({
           <th className="w-20 px-2 py-2.5 text-center font-semibold">Incoming <SortMark /></th>
           <th className="w-20 px-2 py-2.5 text-center font-semibold">Reserved <SortMark /></th>
           <th className="w-24 px-2.5 py-2.5 font-semibold">Last Updated <SortMark /></th>
-          <th className="w-20 px-2.5 py-2.5 text-right font-semibold">Actions</th>
+          <th className="w-36 px-2.5 py-2.5 text-right font-semibold">Actions</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100">
@@ -403,14 +391,11 @@ function ProductsTable({
 
           return (
             <tr key={product.id} className="cursor-pointer bg-white transition hover:bg-slate-50/80">
-              <td className="px-2.5 py-2">
-                <input type="checkbox" aria-label={`Select ${product.product_name}`} className="size-4 rounded border-slate-300" />
-              </td>
-              <td className="px-2.5 py-2 font-medium text-slate-950">
+              <td className="px-2.5 py-2.5 font-medium text-slate-950">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <ProductThumb product={product} />
                   <div className="min-w-0">
-                    <p className="truncate font-medium text-slate-950">{product.product_name}</p>
+                    <p className="line-clamp-2 whitespace-normal break-words font-medium leading-snug text-slate-950">{product.product_name}</p>
                     {!isClientPortal && product.clients ? (
                       <p className="mt-0.5 truncate text-xs text-slate-500">{product.clients.company_name}</p>
                     ) : null}
@@ -426,6 +411,22 @@ function ProductsTable({
               <td className="whitespace-nowrap px-2.5 py-2 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-2.5 py-2">
                 <div className="flex justify-end gap-0.5">
+                  <button
+                    type="button"
+                    aria-label={`Move ${product.product_name} up`}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                    onClick={() => void onMoveProduct(product, "up")}
+                  >
+                    <ArrowUpIcon />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${product.product_name} down`}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                    onClick={() => void onMoveProduct(product, "down")}
+                  >
+                    <ArrowDownIcon />
+                  </button>
                   <Link
                     href={`/products/${product.id}/edit`}
                     aria-label={`Edit ${product.product_name}`}
@@ -540,6 +541,16 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en").format(value);
 }
 
+function compareProductsForDisplay(first: Product, second: Product) {
+  const orderDifference = first.sort_order - second.sort_order;
+
+  if (orderDifference !== 0) {
+    return orderDifference;
+  }
+
+  return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
   const day = new Intl.DateTimeFormat("en", {
@@ -622,12 +633,18 @@ function UploadIcon() {
   );
 }
 
-function FilterIcon() {
+function ArrowUpIcon() {
   return (
     <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 7h16" />
-      <path d="M7 12h10" />
-      <path d="M10 17h4" />
+      <path d="m6 15 6-6 6 6" />
+    </svg>
+  );
+}
+
+function ArrowDownIcon() {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }

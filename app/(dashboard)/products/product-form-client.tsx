@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
-import type { Tables } from "@/app/types/database.types";
+import type { Tables, TablesInsert } from "@/app/types/database.types";
 import {
   Button,
   ErrorBanner,
@@ -155,7 +155,7 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       photoUrl = uploadResult.url;
     }
 
-    const payload = {
+    const payload: TablesInsert<"products"> = {
       client_id: form.client_id,
       product_name: form.product_name.trim(),
       sku: form.sku.trim() || null,
@@ -167,6 +167,19 @@ export function ProductFormClient({ productId }: { productId?: string }) {
       notes: form.notes.trim() || null,
       active: form.active,
     };
+
+    if (!productId) {
+      const { data: lastProduct } = await supabase
+        .from("products")
+        .select("sort_order")
+        .eq("client_id", form.client_id)
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      payload.sort_order = (lastProduct?.sort_order ?? 0) + 1;
+    }
 
     const result = productId
       ? await supabase.from("products").update(payload).eq("id", productId)
