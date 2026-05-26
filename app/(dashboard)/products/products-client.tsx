@@ -11,7 +11,6 @@ import {
   inputClassName,
   LoadingState,
   Panel,
-  StatusBadge,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
@@ -46,7 +45,6 @@ export function ProductsClient() {
   const [productQuery, setProductQuery] = useState("");
   const [asinQuery, setAsinQuery] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("all");
-  const [stockStatusFilter, setStockStatusFilter] = useState("all");
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -139,41 +137,38 @@ export function ProductsClient() {
   }, [loadData]);
 
   async function deleteProduct(product: Product) {
-    if (!window.confirm(`Delete ${product.product_name}?`)) {
+    if (!window.confirm("Delete this product?")) {
       return;
     }
 
     setError(null);
-    const { error: deleteError } = await supabase
-      .from("products")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", product.id);
+    const hasInventory = inventoryRows.some((row) => row.product_id === product.id);
+    const hasShipmentHistory = incomingLines.some((line) => line.product_id === product.id);
+    const payload = hasInventory || hasShipmentHistory
+      ? { active: false }
+      : { deleted_at: new Date().toISOString() };
+    const { error: deleteError } = await supabase.from("products").update(payload).eq("id", product.id);
 
     if (deleteError) {
       setError(deleteError.message);
     } else {
       await loadData();
+      if (hasInventory || hasShipmentHistory) {
+        setError("This product has inventory or shipment history and cannot be deleted. Archive it instead.");
+      }
     }
   }
 
   const displayProducts = useMemo(() => {
     return filteredProducts.filter((product) => {
-      const summary = getClientProductSummary(product, inventoryRows, incomingLines);
-      const stockStatus = getCalculatedStockStatus(summary);
       const matchesStatus =
         clientStatusFilter === "all" ||
         (clientStatusFilter === "active" && product.active) ||
         (clientStatusFilter === "inactive" && !product.active);
-      const matchesStock =
-        stockStatusFilter === "all" ||
-        (stockStatusFilter === "in_stock" && summary.inStock > 0) ||
-        (stockStatusFilter === "incoming" && summary.incomingUnits > 0) ||
-        (stockStatusFilter === "reserved" && summary.reservedUnits > 0) ||
-        (stockStatusFilter === "no_stock" && stockStatus === "No Stock");
 
-      return matchesStatus && matchesStock;
+      return matchesStatus;
     });
-  }, [clientStatusFilter, filteredProducts, incomingLines, inventoryRows, stockStatusFilter]);
+  }, [clientStatusFilter, filteredProducts]);
 
   const clientProductStats = useMemo(() => {
     return products.reduce(
@@ -241,7 +236,7 @@ export function ProductsClient() {
         </section>
         <Panel title="Products">
           <div className="mb-4 space-y-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_11rem_10rem]">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_10rem]">
                 <div className="relative">
                   <SearchIcon />
                   <input
@@ -259,17 +254,6 @@ export function ProductsClient() {
                   <option value="all">Status: All</option>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
-                </select>
-                <select
-                  className={inputClassName}
-                  value={stockStatusFilter}
-                  onChange={(event) => setStockStatusFilter(event.target.value)}
-                >
-                  <option value="all">Stock Status: All</option>
-                  <option value="in_stock">In stock</option>
-                  <option value="incoming">Incoming</option>
-                  <option value="reserved">Reserved</option>
-                  <option value="no_stock">No stock</option>
                 </select>
                 <button
                   type="button"
@@ -364,7 +348,6 @@ function ProductsTable({
           <th className="px-4 py-3 text-right font-semibold">In Stock (Units) <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">Incoming (Units) <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">Reserved (Units) <SortMark /></th>
-          <th className="px-4 py-3 font-semibold">Stock Status</th>
           <th className="px-4 py-3 font-semibold">Last Updated <SortMark /></th>
           <th className="px-4 py-3 text-right font-semibold">Actions</th>
         </tr>
@@ -395,12 +378,6 @@ function ProductsTable({
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.inStock)}</td>
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.incomingUnits)}</td>
               <td className="px-3 py-2.5 text-right text-slate-700">{formatNumber(summary.reservedUnits)}</td>
-              <td className="px-3 py-2.5">
-                {(() => {
-                  const status = getCalculatedStockStatus(summary);
-                  return <StatusBadge tone={calculatedStockStatusTone(status)}>{status}</StatusBadge>;
-                })()}
-              </td>
               <td className="px-3 py-2.5 text-slate-600">{formatDateTime(summary.lastUpdated ?? product.updated_at)}</td>
               <td className="px-3 py-2.5">
                 <div className="flex justify-end gap-1.5">
@@ -411,24 +388,14 @@ function ProductsTable({
                   >
                     <PencilIcon />
                   </Link>
-                  {isClientPortal ? (
-                    <Link
-                      href={`/incoming-shipments?status=${summary.incomingUnits > 0 ? "in_transit" : "all"}`}
-                      aria-label={`View ${product.product_name} shipments`}
-                      className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-                    >
-                      <MoreIcon />
-                    </Link>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={`Delete ${product.product_name}`}
-                      className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
-                      onClick={() => void onDeleteProduct(product)}
-                    >
-                      <MoreIcon />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    aria-label={`Delete ${product.product_name}`}
+                    className="inline-flex size-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+                    onClick={() => void onDeleteProduct(product)}
+                  >
+                    <TrashIcon />
+                  </button>
                 </div>
               </td>
             </tr>
@@ -514,20 +481,6 @@ function getClientProductSummary(
     lastUpdated,
     reservedUnits: reservedQty,
   };
-}
-
-function getCalculatedStockStatus(summary: ReturnType<typeof getClientProductSummary>) {
-  if (summary.inStock > 0) return "In Stock";
-  if (summary.incomingUnits > 0) return "Incoming";
-  if (summary.reservedUnits > 0) return "Reserved";
-  return "No Stock";
-}
-
-function calculatedStockStatusTone(status: string) {
-  if (status === "In Stock") return "emerald";
-  if (status === "Incoming") return "blue";
-  if (status === "Reserved") return "orange";
-  return "slate";
 }
 
 function formatNumber(value: number) {
@@ -636,12 +589,14 @@ function PencilIcon() {
   );
 }
 
-function MoreIcon() {
+function TrashIcon() {
   return (
     <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="12" cy="5" r="1" />
-      <circle cx="12" cy="19" r="1" />
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
     </svg>
   );
 }
