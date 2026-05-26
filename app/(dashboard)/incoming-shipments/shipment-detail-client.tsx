@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
@@ -17,7 +17,7 @@ import {
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
-type Product = Pick<Tables<"products">, "id" | "product_name" | "sku">;
+type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "asin" | "barcode">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
 type TrackingBox = Tables<"incoming_tracking_boxes">;
 type ShipmentItem = Tables<"incoming_items"> & {
@@ -43,6 +43,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   const isClientPortal = role === "client";
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [activeTab, setActiveTab] = useState<"products" | "tracking" | "documents" | "notes" | "history">("products");
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
   const [issueMode, setIssueMode] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -56,7 +57,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
 
     const query = supabase
       .from("incoming_shipments")
-      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(*, products(id, product_name, sku)), incoming_tracking_boxes(*)")
+      .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(*, products(id, product_name, sku, asin, barcode)), incoming_tracking_boxes(*)")
       .eq("id", shipmentId)
       .is("deleted_at", null);
 
@@ -416,21 +417,99 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         </div>
       ) : null}
 
-      <Panel title="Receiving">
+      <Panel title="Shipment details">
+        <div className="mb-4 flex gap-4 border-b border-slate-200 text-sm font-semibold text-slate-600">
+          {[
+            ["products", "Products"],
+            ["tracking", "Tracking / Boxes"],
+            ["documents", "Documents"],
+            ["notes", "Notes"],
+            ["history", "History"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={activeTab === value ? "border-b-2 border-blue-600 pb-3 text-blue-700" : "pb-3"}
+              onClick={() => setActiveTab(value as typeof activeTab)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {activeTab === "products" ? (
+          <ReceivingProductsTable
+            drafts={drafts}
+            isAdmin={isAdmin}
+            issueMode={issueMode}
+            onConfirmReceived={confirmReceived}
+            onMarkIssue={markIssue}
+            onSaveRow={saveRow}
+            savingId={savingId}
+            setDrafts={setDrafts}
+            setIssueMode={setIssueMode}
+            shipment={shipment}
+          />
+        ) : null}
+        {activeTab === "tracking" ? <TrackingTable shipment={shipment} /> : null}
+        {activeTab === "documents" ? (
+          <p className="text-sm text-slate-500">Shipment documents are managed from Files & Documents.</p>
+        ) : null}
+        {activeTab === "notes" ? (
+          <p className="text-sm text-slate-600">{shipment.notes ?? "No shipment notes."}</p>
+        ) : null}
+        {activeTab === "history" ? (
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>Created {formatDateTime(shipment.created_at)}</p>
+            <p>Updated {formatDateTime(shipment.updated_at)}</p>
+            {shipment.incoming_items.some((item) => item.inventory_posted_at) ? <p>Inventory posted for received product rows.</p> : null}
+          </div>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
+function ReceivingProductsTable({
+  drafts,
+  isAdmin,
+  issueMode,
+  onConfirmReceived,
+  onMarkIssue,
+  onSaveRow,
+  savingId,
+  setDrafts,
+  setIssueMode,
+  shipment,
+}: {
+  drafts: Record<string, ItemDraft>;
+  isAdmin: boolean;
+  issueMode: Record<string, boolean>;
+  onConfirmReceived: (item: ShipmentItem) => Promise<void>;
+  onMarkIssue: (item: ShipmentItem) => Promise<void>;
+  onSaveRow: (item: ShipmentItem) => Promise<boolean>;
+  savingId: string | null;
+  setDrafts: Dispatch<SetStateAction<Record<string, ItemDraft>>>;
+  setIssueMode: Dispatch<SetStateAction<Record<string, boolean>>>;
+  shipment: Shipment;
+}) {
+  return (
+    <>
         {shipment.incoming_items.length === 0 ? (
           <EmptyState title="No product rows" body="This shipment does not have any products attached." />
         ) : (
           <div className="max-h-[36rem] overflow-auto">
-            <table className="w-full min-w-[1040px] text-left text-sm tabular-nums">
-              <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
+            <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
+              <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Product</th>
-                  <th className="px-4 py-3 font-semibold">Expected Qty</th>
-                  <th className="px-4 py-3 font-semibold">Actual Qty</th>
-                  <th className="px-4 py-3 font-semibold">Boxes</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Notes</th>
-                  <th className="px-4 py-3 font-semibold">Action</th>
+                  <th className="px-3 py-2.5 font-semibold">Product</th>
+                  <th className="px-3 py-2.5 font-semibold">SKU</th>
+                  <th className="px-3 py-2.5 font-semibold">ASIN / UPC</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Expected Units</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Received Units</th>
+                  <th className="px-3 py-2.5 text-center font-semibold">Boxes</th>
+                  <th className="px-3 py-2.5 font-semibold">Notes</th>
+                  <th className="px-3 py-2.5 font-semibold">Status</th>
+                  {isAdmin ? <th className="px-3 py-2.5 text-right font-semibold">Action</th> : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -450,12 +529,11 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                     <tr key={item.id} className="align-top hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-950">
                         {item.products?.product_name ?? "Unknown product"}
-                        {item.products?.sku ? (
-                          <div className="mt-1 text-xs font-normal text-slate-500">{item.products.sku}</div>
-                        ) : null}
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{item.expected_quantity}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 text-slate-600">{item.products?.sku ?? "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{item.products?.asin ?? "-"}</td>
+                      <td className="px-3 py-2.5 text-center text-slate-600">{item.expected_quantity}</td>
+                      <td className="px-3 py-2.5 text-center">
                         {isAdmin && !item.inventory_posted_at ? (
                           <div className="space-y-2">
                             <input
@@ -507,7 +585,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                           <span className="text-slate-600">{item.received_quantity || item.expected_quantity}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5 text-center">
                         {isAdmin && !item.inventory_posted_at ? (
                           <input
                             className={`${inputClassName} w-28`}
@@ -525,12 +603,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                           <span className="text-slate-600">{item.received_boxes ?? item.expected_boxes}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge tone={rowStatusTone(item, rowIssue, shipment.statuses?.name)}>
-                          {rowStatus(item, rowIssue, shipment.statuses?.name)}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         {isAdmin && !item.inventory_posted_at ? (
                           <Field label=" ">
                             <input
@@ -548,14 +621,19 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                           <span className="text-slate-600">{item.notes ?? "-"}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        {isAdmin ? (
+                      <td className="px-3 py-2.5">
+                        <StatusBadge tone={rowStatusTone(item, rowIssue, shipment.statuses?.name)}>
+                          {rowStatus(item, rowIssue, shipment.statuses?.name)}
+                        </StatusBadge>
+                      </td>
+                      {isAdmin ? (
+                      <td className="px-3 py-2.5">
                           <div className="flex flex-wrap gap-2">
                             <Button
                               type="button"
                               variant="secondary"
                               disabled={Boolean(item.inventory_posted_at) || savingId !== null}
-                              onClick={() => void saveRow(item)}
+                              onClick={() => void onSaveRow(item)}
                             >
                               Save
                             </Button>
@@ -571,7 +649,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                               type="button"
                               variant="secondary"
                               disabled={Boolean(item.inventory_posted_at) || savingId !== null}
-                              onClick={() => void confirmReceived(item)}
+                              onClick={() => void onConfirmReceived(item)}
                             >
                               {savingId === `confirm-${item.id}` ? "Posting..." : item.inventory_posted_at ? "Already posted" : "Confirm Received"}
                             </Button>
@@ -579,15 +657,13 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
                               type="button"
                               variant="danger"
                               disabled={Boolean(item.inventory_posted_at) || savingId !== null}
-                              onClick={() => void markIssue(item)}
+                              onClick={() => void onMarkIssue(item)}
                             >
                               Mark Issue
                             </Button>
                           </div>
-                        ) : (
-                          <span className="text-sm text-slate-500">{item.inventory_posted_at ? "Available" : "View"}</span>
-                        )}
                       </td>
+                      ) : null}
                     </tr>
                   );
                 })}
@@ -595,7 +671,39 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
             </table>
           </div>
         )}
-      </Panel>
+    </>
+  );
+}
+
+function TrackingTable({ shipment }: { shipment: Shipment }) {
+  return (
+    <div className="overflow-auto">
+      <table className="w-full min-w-[640px] text-left text-sm tabular-nums">
+        <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] font-medium text-slate-500">
+          <tr>
+            <th className="px-3 py-2.5 font-semibold">Tracking Number</th>
+            <th className="px-3 py-2.5 font-semibold">Carrier</th>
+            <th className="px-3 py-2.5 text-center font-semibold">Box Count</th>
+            <th className="px-3 py-2.5 font-semibold">Notes</th>
+            <th className="px-3 py-2.5 font-semibold">Delivery Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {shipment.incoming_tracking_boxes.length === 0 ? (
+            <tr>
+              <td className="px-3 py-3 text-slate-500" colSpan={5}>No tracking numbers yet.</td>
+            </tr>
+          ) : shipment.incoming_tracking_boxes.map((box) => (
+            <tr key={box.id}>
+              <td className="px-3 py-2.5 font-medium text-slate-950">{box.tracking_number}</td>
+              <td className="px-3 py-2.5 text-slate-600">{box.carrier ?? "-"}</td>
+              <td className="px-3 py-2.5 text-center text-slate-600">{box.box_count ?? "-"}</td>
+              <td className="px-3 py-2.5 text-slate-600">{box.notes ?? "-"}</td>
+              <td className="px-3 py-2.5"><StatusBadge tone={box.status === "Issue" ? "rose" : box.status === "Received" ? "emerald" : box.status === "Delivered" ? "orange" : "blue"}>{box.status}</StatusBadge></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -607,6 +715,15 @@ function Summary({ label, value }: { label: string; value: string | number }) {
       <p className="mt-2 text-xl font-semibold text-slate-950">{value}</p>
     </div>
   );
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function parseDraft(
