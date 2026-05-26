@@ -35,16 +35,18 @@ type IncomingProductLine = Pick<
     statuses: Pick<Tables<"statuses">, "name"> | null;
   } | null;
 };
+type RequestProductLine = Pick<Tables<"request_items">, "product_id">;
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([]);
   const [incomingLines, setIncomingLines] = useState<IncomingProductLine[]>([]);
+  const [requestLines, setRequestLines] = useState<RequestProductLine[]>([]);
   const [clientFilter, setClientFilter] = useState("all");
   const [productQuery, setProductQuery] = useState("");
   const [asinQuery, setAsinQuery] = useState("");
-  const [clientStatusFilter, setClientStatusFilter] = useState("all");
+  const [clientStatusFilter, setClientStatusFilter] = useState("active");
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -96,17 +98,23 @@ export function ProductsClient() {
       .from("incoming_items")
       .select("inventory_posted_at, product_id, expected_quantity, received_quantity, is_unexpected, tracking_box_id, incoming_shipments!inner(number_of_boxes, statuses(name))")
       .is("deleted_at", null);
+    const requestItemsQuery = supabase
+      .from("request_items")
+      .select("product_id, service_requests!inner(client_id)")
+      .is("deleted_at", null);
 
     if (isClientPortal && clientId) {
       productsQuery.eq("client_id", clientId);
       inventoryQuery.eq("client_id", clientId);
       incomingQuery.eq("incoming_shipments.client_id", clientId);
+      requestItemsQuery.eq("service_requests.client_id", clientId);
     }
 
-    const [productsResult, inventoryResult, incomingResult] = await Promise.all([
+    const [productsResult, inventoryResult, incomingResult, requestItemsResult] = await Promise.all([
       productsQuery,
       inventoryQuery,
       incomingQuery,
+      requestItemsQuery,
     ]);
 
     if (productsResult.error) {
@@ -127,6 +135,12 @@ export function ProductsClient() {
       setIncomingLines((incomingResult.data ?? []) as IncomingProductLine[]);
     }
 
+    if (requestItemsResult.error) {
+      setError(requestItemsResult.error.message);
+    } else {
+      setRequestLines((requestItemsResult.data ?? []) as RequestProductLine[]);
+    }
+
     setLoading(false);
   }, [clientId, isClientPortal]);
 
@@ -144,17 +158,45 @@ export function ProductsClient() {
     setError(null);
     const hasInventory = inventoryRows.some((row) => row.product_id === product.id);
     const hasShipmentHistory = incomingLines.some((line) => line.product_id === product.id);
-    const payload = hasInventory || hasShipmentHistory
-      ? { active: false }
-      : { deleted_at: new Date().toISOString() };
-    const { error: deleteError } = await supabase.from("products").update(payload).eq("id", product.id);
+    const hasRequestHistory = requestLines.some((line) => line.product_id === product.id);
+
+    if (hasInventory || hasShipmentHistory || hasRequestHistory) {
+      setError("This product has inventory or shipment history and cannot be deleted. Archive it instead.");
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("products")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", product.id);
 
     if (deleteError) {
       setError(deleteError.message);
     } else {
       await loadData();
-      if (hasInventory || hasShipmentHistory) {
-        setError("This product has inventory or shipment history and cannot be deleted. Archive it instead.");
+    }
+  }
+
+  async function archiveProduct(product: Product) {
+    const nextActive = !product.active;
+    const action = nextActive ? "restore" : "archive";
+
+    if (!window.confirm(`${nextActive ? "Restore" : "Archive"} this product?`)) {
+      return;
+    }
+
+    setError(null);
+    const { error: archiveError } = await supabase
+      .from("products")
+      .update({ active: nextActive })
+      .eq("id", product.id);
+
+    if (archiveError) {
+      setError(archiveError.message);
+    } else {
+      await loadData();
+      if (action === "archive") {
+        setError("Product archived. History remains available in existing records.");
       }
     }
   }
@@ -251,9 +293,9 @@ export function ProductsClient() {
                   value={clientStatusFilter}
                   onChange={(event) => setClientStatusFilter(event.target.value)}
                 >
-                  <option value="all">Status: All</option>
                   <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
+                  <option value="all">All</option>
+                  <option value="inactive">Archived</option>
                 </select>
                 <button
                   type="button"
@@ -311,6 +353,7 @@ export function ProductsClient() {
                 inventoryRows={inventoryRows}
                 incomingLines={incomingLines}
                 isClientPortal={isClientPortal}
+                onArchiveProduct={archiveProduct}
                 onDeleteProduct={deleteProduct}
               />
             </div>
@@ -326,12 +369,14 @@ function ProductsTable({
   inventoryRows,
   incomingLines,
   isClientPortal,
+  onArchiveProduct,
   onDeleteProduct,
 }: {
   products: Product[];
   inventoryRows: InventoryRow[];
   incomingLines: IncomingProductLine[];
   isClientPortal: boolean;
+  onArchiveProduct: (product: Product) => Promise<void>;
   onDeleteProduct: (product: Product) => Promise<void>;
 }) {
   return (
@@ -388,6 +433,14 @@ function ProductsTable({
                   >
                     <PencilIcon />
                   </Link>
+                  <button
+                    type="button"
+                    aria-label={`${product.active ? "Archive" : "Restore"} ${product.product_name}`}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+                    onClick={() => void onArchiveProduct(product)}
+                  >
+                    <ArchiveIcon archived={!product.active} />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Delete ${product.product_name}`}
@@ -596,6 +649,17 @@ function TrashIcon() {
       <path d="M19 6l-1 14H6L5 6" />
       <path d="M10 11v5" />
       <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function ArchiveIcon({ archived }: { archived: boolean }) {
+  return (
+    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 7h16" />
+      <path d="M6 7v13h12V7" />
+      <path d="M9 11h6" />
+      {archived ? <path d="m9 16 3-3 3 3" /> : <path d="m9 14 3 3 3-3" />}
     </svg>
   );
 }

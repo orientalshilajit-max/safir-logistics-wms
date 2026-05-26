@@ -269,7 +269,7 @@ export function ProductFormClient({ productId }: { productId?: string }) {
           <Field label="Status">
             <select className={inputClassName} value={form.active ? "active" : "inactive"} onChange={(event) => setForm({ ...form, active: event.target.value === "active" })}>
               <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="inactive">Archived</option>
             </select>
           </Field>
           <div className="flex gap-2 lg:col-span-2">

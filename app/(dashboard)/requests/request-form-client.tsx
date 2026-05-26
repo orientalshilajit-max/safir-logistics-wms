@@ -29,7 +29,7 @@ import {
 import { formatMoney, formatPricingType } from "../services/service-form-client";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
-type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku">;
+type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "active">;
 type InventoryRow = Tables<"inventory"> & {
   clients: Client | null;
   products: Product | null;
@@ -170,7 +170,7 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
       }
 
       return inventory.filter(
-        (row) => row.client_id === selectedClientId && row.available_qty > 0,
+        (row) => row.client_id === selectedClientId && row.available_qty > 0 && row.products?.active !== false,
       );
     },
     [existingRequest, form.inventory_id, inventory, selectedClientId],
@@ -217,7 +217,7 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
       .order("company_name");
     const inventoryQuery = supabase
       .from("inventory")
-      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku)")
+      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, active)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
     const servicesQuery = supabase

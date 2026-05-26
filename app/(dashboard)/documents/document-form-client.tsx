@@ -151,6 +151,7 @@ export function DocumentFormClient({
         .from("products")
         .select("id, product_name, sku")
         .eq("client_id", nextClientId)
+        .eq("active", true)
         .is("deleted_at", null)
         .order("product_name"),
       supabase
