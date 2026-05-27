@@ -4,7 +4,7 @@ export type UserRole = "admin" | "client" | "warehouse_operator";
 
 export const AUTH_TOKEN_COOKIE = "safir-sb-access-token";
 export const AUTH_REFRESH_COOKIE = "safir-sb-refresh-token";
-export const CLIENT_ACCOUNT_LINK_ERROR = "Client account is not linked correctly.";
+export const CLIENT_ACCOUNT_LINK_ERROR = "Client account is not linked correctly. Please contact support.";
 
 export function getUserRole(user: User | null): UserRole {
   const role = user?.app_metadata?.role;

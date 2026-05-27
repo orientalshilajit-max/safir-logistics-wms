@@ -105,11 +105,19 @@ export async function POST(
   }
 
   if (typedClient.login_status === "active") {
-    if (existingUser && typedClient.auth_user_id !== existingUser.id) {
-      await adminClient
-        .from("clients")
-        .update({ auth_user_id: existingUser.id, login_status: "active" })
-        .eq("id", typedClient.id);
+    if (existingUser) {
+      const syncResult = await syncClientAuthUser(typedClient, existingUser, adminClient);
+
+      if (syncResult.error) {
+        logAuthError("sync active auth user", syncResult.error, typedClient);
+        return NextResponse.json(
+          {
+            error: syncResult.error.message,
+            instructions: manualInstructions(typedClient.id, typedClient, existingUser.id),
+          },
+          { status: 400 },
+        );
+      }
     }
 
     return NextResponse.json({
@@ -156,26 +164,13 @@ export async function POST(
     );
   }
 
-  const { data: updatedUserData, error: metadataError } =
-    await adminClient.auth.admin.updateUserById(authUser.id, {
-      app_metadata: {
-        ...(authUser.app_metadata ?? {}),
-        role: "client",
-        client_id: typedClient.id,
-      },
-      user_metadata: {
-        ...(authUser.user_metadata ?? {}),
-        company_name: typedClient.company_name,
-        contact_name: typedClient.contact_name,
-        client_id: typedClient.id,
-      },
-    });
+  const syncResult = await syncClientAuthUser(typedClient, authUser, adminClient);
 
-  if (metadataError || !updatedUserData.user) {
-    logAuthError("update auth metadata", metadataError, typedClient);
+  if (syncResult.error || !syncResult.user) {
+    logAuthError("update auth metadata", syncResult.error, typedClient);
     return NextResponse.json(
       {
-        error: metadataError?.message ?? "Unable to update client auth metadata.",
+        error: syncResult.error?.message ?? "Unable to update client auth metadata.",
         instructions: manualInstructions(typedClient.id, typedClient, authUser.id),
       },
       { status: 400 },
@@ -217,8 +212,8 @@ export async function POST(
   const { error: updateError } = await adminClient
     .from("clients")
     .update({
-      auth_user_id: updatedUserData.user.id,
-      login_status: nextLoginStatus(typedClient, updatedUserData.user),
+      auth_user_id: syncResult.user.id,
+      login_status: nextLoginStatus(typedClient, syncResult.user),
     })
     .eq("id", typedClient.id);
 
@@ -226,7 +221,7 @@ export async function POST(
     return NextResponse.json(
       {
         error: updateError.message,
-        instructions: manualInstructions(typedClient.id, typedClient, updatedUserData.user.id),
+        instructions: manualInstructions(typedClient.id, typedClient, syncResult.user.id),
       },
       { status: 400 },
     );
@@ -234,8 +229,8 @@ export async function POST(
 
   return NextResponse.json({
     message: isResend ? "Invite resent" : "Invite sent",
-    auth_user_id: updatedUserData.user.id,
-    login_status: nextLoginStatus(typedClient, updatedUserData.user),
+    auth_user_id: syncResult.user.id,
+    login_status: nextLoginStatus(typedClient, syncResult.user),
   });
 }
 
@@ -268,6 +263,43 @@ async function inviteNewUser(
   );
 
   return { user: data.user, error };
+}
+
+async function syncClientAuthUser(
+  client: ClientRow,
+  authUser: User,
+  adminClient: NonNullable<ReturnType<typeof createSupabaseAdminClient>>,
+) {
+  const { data, error } = await adminClient.auth.admin.updateUserById(authUser.id, {
+    app_metadata: {
+      ...(authUser.app_metadata ?? {}),
+      role: "client",
+      client_id: client.id,
+    },
+    user_metadata: {
+      ...(authUser.user_metadata ?? {}),
+      company_name: client.company_name,
+      contact_name: client.contact_name,
+      client_id: client.id,
+    },
+  });
+
+  if (error || !data.user) {
+    return { user: null, error };
+  }
+
+  const { error: clientUpdateError } = await adminClient
+    .from("clients")
+    .update({
+      auth_user_id: data.user.id,
+      login_status: nextLoginStatus(client, data.user),
+    })
+    .eq("id", client.id);
+
+  return {
+    user: data.user,
+    error: clientUpdateError,
+  };
 }
 
 function getEmailRedirectUrl() {
