@@ -113,6 +113,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const [creatingProductIndex, setCreatingProductIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [removingLineId, setRemovingLineId] = useState<string | null>(null);
+  const [removingTrackingId, setRemovingTrackingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const availableProducts = useMemo(
@@ -191,7 +193,10 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             query = query.eq("client_id", clientId as string);
           }
 
-          return query.single();
+          return query
+            .is("incoming_items.deleted_at", null)
+            .is("incoming_tracking_boxes.deleted_at", null)
+            .single();
         })()
       : Promise.resolve({ data: null, error: null });
 
@@ -296,6 +301,54 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }));
   }
 
+  function addLine() {
+    setForm((current) => {
+      if (current.lines.some((line) => !line.product_id && !line.new_product_name.trim())) {
+        return current;
+      }
+
+      return {
+        ...current,
+        lines: [...current.lines, { ...emptyLine }],
+      };
+    });
+  }
+
+  async function removeLine(index: number) {
+    const line = form.lines[index];
+
+    if (!line || removingLineId || !canEditProductLines) return;
+
+    setForm((current) => ({
+      ...current,
+      lines: current.lines.filter((_, currentIndex) => currentIndex !== index),
+    }));
+
+    if (!line.id || !shipmentId) {
+      return;
+    }
+
+    setRemovingLineId(line.id);
+    setError(null);
+
+    const { error: removeError } = await supabase
+      .from("incoming_items")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", line.id)
+      .eq("shipment_id", shipmentId)
+      .is("inventory_posted_at", null);
+
+    if (removeError) {
+      setError(removeError.message);
+      setForm((current) => ({
+        ...current,
+        lines: [...current.lines.slice(0, index), line, ...current.lines.slice(index)],
+      }));
+    }
+
+    setRemovingLineId(null);
+  }
+
   async function createInlineProduct(index: number) {
     const line = form.lines[index];
 
@@ -362,6 +415,54 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }));
   }
 
+  function addTrackingLine() {
+    setForm((current) => {
+      if (current.trackingLines.some((line) => !line.tracking_number.trim() && !line.notes.trim())) {
+        return current;
+      }
+
+      return {
+        ...current,
+        trackingLines: [...current.trackingLines, { ...emptyTrackingLine }],
+      };
+    });
+  }
+
+  async function removeTrackingLine(index: number) {
+    const line = form.trackingLines[index];
+
+    if (!line || removingTrackingId || !canEditTrackingLines) return;
+
+    setForm((current) => ({
+      ...current,
+      trackingLines: current.trackingLines.filter((_, currentIndex) => currentIndex !== index),
+    }));
+
+    if (!line.id || !shipmentId) {
+      return;
+    }
+
+    setRemovingTrackingId(line.id);
+    setError(null);
+
+    const { error: removeError } = await supabase
+      .from("incoming_tracking_boxes")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", line.id)
+      .eq("shipment_id", shipmentId)
+      .is("inventory_posted_at", null);
+
+    if (removeError) {
+      setError(removeError.message);
+      setForm((current) => ({
+        ...current,
+        trackingLines: [...current.trackingLines.slice(0, index), line, ...current.trackingLines.slice(index)],
+      }));
+    }
+
+    setRemovingTrackingId(null);
+  }
+
   async function saveShipment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) return;
@@ -387,7 +488,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       return;
     }
 
-    const preparedLines = form.lines.filter((line) => line.product_id || line.new_product_name.trim());
+    const preparedLines = normalizeShipmentLines(form.lines);
 
     if (preparedLines.length === 0) {
       setError("Add at least one product line.");
@@ -411,7 +512,17 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       }
     }
 
-    for (const line of form.trackingLines) {
+    const duplicateProduct = findDuplicateProduct(preparedLines);
+
+    if (duplicateProduct) {
+      setError("Each product can only appear once on an incoming shipment.");
+      setSaving(false);
+      return;
+    }
+
+    const validTrackingRows = normalizeTrackingLines(form.trackingLines);
+
+    for (const line of validTrackingRows) {
       if (!line.tracking_number.trim() && !line.box_count.trim() && !line.notes.trim()) continue;
       const boxCount = line.box_count.trim() === "" ? null : Number(line.box_count);
 
@@ -422,10 +533,18 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       }
     }
 
-    const trackingNumbers = form.trackingLines
+    const duplicateTracking = findDuplicateTracking(validTrackingRows);
+
+    if (duplicateTracking) {
+      setError("Each tracking number can only appear once on an incoming shipment.");
+      setSaving(false);
+      return;
+    }
+
+    const trackingNumbers = validTrackingRows
       .map((line) => line.tracking_number.trim())
       .filter(Boolean);
-    const totalBoxes = form.trackingLines.reduce((sum, line) => sum + (line.box_count.trim() === "" ? 1 : Number(line.box_count)), 0);
+    const totalBoxes = validTrackingRows.reduce((sum, line) => sum + (line.box_count.trim() === "" ? 1 : Number(line.box_count)), 0);
     const masterTracking = trackingNumbers[0] ?? "";
 
     if (isClientPortal && shipmentId && !canFullyEditShipment && canEditLimitedClientFields) {
@@ -436,8 +555,9 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           .filter((line) => line.id)
           .map((line) => ({ id: line.id as string, notes: line.notes.trim() })) as Json,
         p_shipment_id: shipmentId,
-        p_tracking_rows: form.trackingLines.map((line) => ({
+        p_tracking_rows: validTrackingRows.map((line) => ({
           box_count: line.box_count.trim() || "1",
+          id: line.id ?? null,
           notes: line.notes.trim(),
           tracking_number: line.tracking_number.trim(),
         })) as Json,
@@ -495,7 +615,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
 
     const activeShipmentId = shipmentResult.data.id;
 
-    if (canFullyEditShipment && isAdmin && shipmentId) {
+    if (canFullyEditShipment) {
       const retainedItemIds = preparedLines.map((line) => line.id).filter(Boolean) as string[];
       let softDeleteQuery = supabase
         .from("incoming_items")
@@ -523,7 +643,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           product_id: line.product_id,
         };
         const result = line.id
-          ? await supabase.from("incoming_items").update(payload).eq("id", line.id)
+          ? await supabase.from("incoming_items").update(payload).eq("id", line.id).eq("shipment_id", activeShipmentId)
           : await supabase.from("incoming_items").insert({
             ...payload,
             shipment_id: activeShipmentId,
@@ -535,35 +655,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           return;
         }
       }
-    } else if (canFullyEditShipment) {
-      const itemDeleteQuery = supabase
-        .from("incoming_items")
-        .update({ deleted_at: new Date().toISOString() })
-        .eq("shipment_id", activeShipmentId)
-        .is("inventory_posted_at", null);
-      const { error: softDeleteError } = await itemDeleteQuery;
-
-      if (softDeleteError) {
-        setError(softDeleteError.message);
-        setSaving(false);
-        return;
-      }
-
-      const { error: itemsError } = await supabase.from("incoming_items").insert(
-        preparedLines.map((line) => ({
-          shipment_id: activeShipmentId,
-          product_id: line.product_id,
-          expected_quantity: Number(line.expected_quantity),
-          expected_boxes: 0,
-          notes: line.notes.trim() || null,
-        })),
-      );
-
-      if (itemsError) {
-        setError(itemsError.message);
-        setSaving(false);
-        return;
-      }
     } else if (canEditLimitedClientFields) {
       for (const line of preparedLines) {
         if (!line.id) continue;
@@ -571,7 +662,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         const { error: noteError } = await supabase
           .from("incoming_items")
           .update({ notes: line.notes.trim() || null })
-          .eq("id", line.id);
+          .eq("id", line.id)
+          .eq("shipment_id", activeShipmentId);
 
         if (noteError) {
           setError(noteError.message);
@@ -582,77 +674,43 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }
 
     if (canEditTrackingLines) {
-      const validTrackingRows = form.trackingLines.filter((line) => line.tracking_number.trim());
+      const retainedBoxIds = validTrackingRows.map((line) => line.id).filter(Boolean) as string[];
+      let deleteBoxesQuery = supabase
+        .from("incoming_tracking_boxes")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("shipment_id", activeShipmentId)
+        .is("inventory_posted_at", null);
 
-      if (isAdmin && shipmentId) {
-        const retainedBoxIds = validTrackingRows.map((line) => line.id).filter(Boolean) as string[];
-        let deleteBoxesQuery = supabase
-          .from("incoming_tracking_boxes")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("shipment_id", activeShipmentId)
-          .is("inventory_posted_at", null);
+      if (retainedBoxIds.length > 0) {
+        deleteBoxesQuery = deleteBoxesQuery.not("id", "in", `(${retainedBoxIds.join(",")})`);
+      }
 
-        if (retainedBoxIds.length > 0) {
-          deleteBoxesQuery = deleteBoxesQuery.not("id", "in", `(${retainedBoxIds.join(",")})`);
-        }
+      const { error: deleteBoxesError } = await deleteBoxesQuery;
 
-        const { error: deleteBoxesError } = await deleteBoxesQuery;
+      if (deleteBoxesError) {
+        setError(deleteBoxesError.message);
+        setSaving(false);
+        return;
+      }
 
-        if (deleteBoxesError) {
-          setError(deleteBoxesError.message);
+      for (const line of validTrackingRows) {
+        const payload = {
+          box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
+          carrier: form.carrier.trim() || null,
+          notes: line.notes.trim() || null,
+          tracking_number: line.tracking_number.trim(),
+        };
+        const result = line.id
+          ? await supabase.from("incoming_tracking_boxes").update(payload).eq("id", line.id).eq("shipment_id", activeShipmentId)
+          : await supabase.from("incoming_tracking_boxes").insert({
+            ...payload,
+            shipment_id: activeShipmentId,
+          });
+
+        if (result.error) {
+          setError(result.error.message);
           setSaving(false);
           return;
-        }
-
-        for (const line of validTrackingRows) {
-          const payload = {
-            box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
-            carrier: form.carrier.trim() || null,
-            notes: line.notes.trim() || null,
-            tracking_number: line.tracking_number.trim(),
-          };
-          const result = line.id
-            ? await supabase.from("incoming_tracking_boxes").update(payload).eq("id", line.id)
-            : await supabase.from("incoming_tracking_boxes").insert({
-              ...payload,
-              shipment_id: activeShipmentId,
-            });
-
-          if (result.error) {
-            setError(result.error.message);
-            setSaving(false);
-            return;
-          }
-        }
-      } else {
-        const { error: deleteBoxesError } = await supabase
-          .from("incoming_tracking_boxes")
-          .update({ deleted_at: new Date().toISOString() })
-          .eq("shipment_id", activeShipmentId)
-          .is("inventory_posted_at", null);
-
-        if (deleteBoxesError) {
-          setError(deleteBoxesError.message);
-          setSaving(false);
-          return;
-        }
-
-        if (validTrackingRows.length > 0) {
-          const { error: boxesError } = await supabase.from("incoming_tracking_boxes").insert(
-            validTrackingRows.map((line) => ({
-              shipment_id: activeShipmentId,
-              tracking_number: line.tracking_number.trim(),
-              carrier: form.carrier.trim() || null,
-              box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
-              notes: line.notes.trim() || null,
-            })),
-          );
-
-          if (boxesError) {
-            setError(boxesError.message);
-            setSaving(false);
-            return;
-          }
         }
       }
     }
@@ -725,7 +783,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-slate-950">Products</h3>
             {form.lines.map((line, index) => (
-              <div key={index} className="space-y-3 rounded-md border border-slate-100 bg-slate-50 p-3">
+              <div key={line.id ?? `new-${index}`} className="space-y-3 rounded-md border border-slate-100 bg-slate-50 p-3">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_7rem_minmax(0,1fr)_auto]">
                   <Field label="Product">
                     <select
@@ -766,8 +824,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                   </Field>
                   {form.lines.length > 1 && canEditProductLines ? (
                     <div className="flex items-end">
-                      <Button type="button" variant="danger" onClick={() => setForm({ ...form, lines: form.lines.filter((_, currentIndex) => currentIndex !== index) })}>
-                        Remove
+                      <Button type="button" variant="danger" disabled={removingLineId === line.id} onClick={() => void removeLine(index)}>
+                        {removingLineId === line.id ? "Removing..." : "Remove"}
                       </Button>
                     </div>
                   ) : null}
@@ -788,7 +846,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
               </div>
             ))}
             <div className="pt-1">
-              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || !canEditProductLines}>
+              <Button type="button" variant="secondary" onClick={addLine} disabled={!form.client_id || !canEditProductLines}>
                 + Add Another Product
               </Button>
             </div>
@@ -809,7 +867,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
               </Field>
             </div>
             {form.trackingLines.map((line, index) => (
-              <div key={index} className="grid gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
+              <div key={line.id ?? `new-${index}`} className="grid gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
                 <Field label="Tracking number">
                   <input className={inputClassName} disabled={!canEditTrackingLines} value={line.tracking_number} onChange={(event) => updateTrackingLine(index, { ...line, tracking_number: event.target.value })} />
                 </Field>
@@ -819,17 +877,17 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                 <Field label="Notes">
                   <input className={inputClassName} disabled={!canEditTrackingLines} value={line.notes} onChange={(event) => updateTrackingLine(index, { ...line, notes: event.target.value })} />
                 </Field>
-                {form.trackingLines.length > 1 && canFullyEditShipment ? (
+                {form.trackingLines.length > 1 && canEditTrackingLines ? (
                   <div className="flex items-end">
-                    <Button type="button" variant="danger" onClick={() => setForm({ ...form, trackingLines: form.trackingLines.filter((_, currentIndex) => currentIndex !== index) })}>
-                      Remove
+                    <Button type="button" variant="danger" disabled={removingTrackingId === line.id} onClick={() => void removeTrackingLine(index)}>
+                      {removingTrackingId === line.id ? "Removing..." : "Remove"}
                     </Button>
                   </div>
                 ) : null}
               </div>
             ))}
             <div className="pt-1">
-              <Button type="button" variant="secondary" disabled={!canEditTrackingLines} onClick={() => setForm({ ...form, trackingLines: [...form.trackingLines, emptyTrackingLine] })}>
+              <Button type="button" variant="secondary" disabled={!canEditTrackingLines} onClick={addTrackingLine}>
                 + Add Another Tracking Number
               </Button>
             </div>
@@ -847,4 +905,71 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       </Panel>
     </div>
   );
+}
+
+function normalizeShipmentLines(lines: ShipmentLine[]) {
+  const seenIds = new Set<string>();
+
+  return lines.filter((line) => {
+    if (!line.product_id && !line.new_product_name.trim()) {
+      return false;
+    }
+
+    if (!line.id) {
+      return true;
+    }
+
+    if (seenIds.has(line.id)) {
+      return false;
+    }
+
+    seenIds.add(line.id);
+    return true;
+  });
+}
+
+function normalizeTrackingLines(lines: TrackingLine[]) {
+  const seenIds = new Set<string>();
+
+  return lines.filter((line) => {
+    if (!line.tracking_number.trim() && !line.notes.trim()) {
+      return false;
+    }
+
+    if (!line.id) {
+      return true;
+    }
+
+    if (seenIds.has(line.id)) {
+      return false;
+    }
+
+    seenIds.add(line.id);
+    return true;
+  });
+}
+
+function findDuplicateProduct(lines: ShipmentLine[]) {
+  const seenProductIds = new Set<string>();
+
+  for (const line of lines) {
+    if (!line.product_id) continue;
+    if (seenProductIds.has(line.product_id)) return line.product_id;
+    seenProductIds.add(line.product_id);
+  }
+
+  return null;
+}
+
+function findDuplicateTracking(lines: TrackingLine[]) {
+  const seenTrackingNumbers = new Set<string>();
+
+  for (const line of lines) {
+    const trackingNumber = line.tracking_number.trim().toLowerCase();
+    if (!trackingNumber) continue;
+    if (seenTrackingNumbers.has(trackingNumber)) return trackingNumber;
+    seenTrackingNumbers.add(trackingNumber);
+  }
+
+  return null;
 }
