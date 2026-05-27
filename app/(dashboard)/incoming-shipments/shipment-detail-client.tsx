@@ -145,10 +145,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   async function markArrivedAtPrep() {
     if (!shipment || !isAdmin || savingId) return;
 
-    const arrivedStatus = statuses.find((status) => status.name === "Arrived at Prep");
+    const arrivedStatus = statuses.find((status) => status.name === "Arrived");
 
     if (!arrivedStatus) {
-      setError("Arrived at Prep status is not configured.");
+      setError("Arrived status is not configured.");
       return;
     }
 
@@ -181,7 +181,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       }
     }
 
-    setMessage("Shipment marked Arrived at Prep.");
+    setMessage("Shipment marked Arrived.");
     await loadShipment();
     setSavingId(null);
   }
@@ -189,7 +189,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   async function markIssue(item: ShipmentItem) {
     if (!shipment || !isAdmin || savingId) return;
 
-    const issueStatus = statuses.find((status) => status.name === "Issue");
+    const issueStatus = statuses.find((status) => status.name === "Need Attention");
 
     setIssueMode((current) => ({ ...current, [item.id]: true }));
 
@@ -209,7 +209,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     if (updateError) {
       setError(updateError.message);
     } else {
-      setMessage("Shipment marked Issue.");
+      setMessage("Shipment marked Need Attention.");
       await loadShipment();
     }
 
@@ -263,7 +263,6 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     }
 
     setMessage("Receiving row saved.");
-    await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipment.id });
     await loadShipment();
     setSavingId(null);
     return true;
@@ -358,7 +357,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
           .from("incoming_tracking_boxes")
           .update({
             inventory_posted_at: new Date().toISOString(),
-            status: hasDiscrepancy ? "Issue" : "Received",
+            status: "Received",
           })
           .eq("id", item.tracking_box_id);
 
@@ -370,7 +369,6 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       }
     }
 
-    await supabase.rpc("sync_incoming_shipment_receiving_status", { p_shipment_id: shipment.id });
     setMessage("Inventory updated successfully.");
     await loadShipment();
     setSavingId(null);
@@ -410,7 +408,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       {isAdmin ? (
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" disabled={savingId !== null} onClick={() => void markArrivedAtPrep()}>
-            Mark Arrived at Prep
+            Mark Arrived
           </Button>
         </div>
       ) : null}
@@ -603,8 +601,8 @@ function ReceivingProductsTable({
                         )}
                       </td>
                       <td className="px-3 py-2.5">
-                        <StatusBadge tone={rowStatusTone(item, rowIssue, shipment.statuses?.name)}>
-                          {rowStatus(item, rowIssue, shipment.statuses?.name)}
+                        <StatusBadge tone={rowStatusTone(item, shipment.statuses?.name)}>
+                          {rowStatus(item, shipment.statuses?.name)}
                         </StatusBadge>
                       </td>
                       {isAdmin ? (
@@ -640,7 +638,7 @@ function ReceivingProductsTable({
                               disabled={Boolean(item.inventory_posted_at) || savingId !== null}
                               onClick={() => void onMarkIssue(item)}
                             >
-                              Mark Issue
+                              Need Attention
                             </Button>
                           </div>
                       </td>
@@ -680,7 +678,7 @@ function TrackingTable({ shipment }: { shipment: Shipment }) {
               <td className="px-3 py-2.5 text-slate-600">{box.carrier ?? "-"}</td>
               <td className="px-3 py-2.5 text-center text-slate-600">{defaultBoxCount(box.box_count)}</td>
               <td className="px-3 py-2.5 text-slate-600">{box.notes ?? "-"}</td>
-              <td className="px-3 py-2.5"><StatusBadge tone={box.status === "Issue" ? "rose" : box.status === "Received" ? "emerald" : box.status === "Delivered" ? "orange" : "blue"}>{box.status}</StatusBadge></td>
+              <td className="px-3 py-2.5"><StatusBadge tone={box.status === "Issue" ? "rose" : box.status === "Received" ? "emerald" : box.status === "Delivered" ? "orange" : "blue"}>{box.status === "Issue" ? "Need Attention" : box.status}</StatusBadge></td>
             </tr>
           ))}
         </tbody>
@@ -751,19 +749,18 @@ function hasItemIssue(item: ShipmentItem) {
   );
 }
 
-function rowStatus(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: string) {
-  if (rowIssue || shipmentStatus === "Issue") return "Issue";
+function rowStatus(item: ShipmentItem, shipmentStatus?: string) {
+  if (shipmentStatus === "Need Attention" || shipmentStatus === "Issue") return "Need Attention";
   if (item.inventory_posted_at) return "Available";
-  if (shipmentStatus === "Arrived at Prep") return "Receiving";
-  if (shipmentStatus === "Receiving") return "Receiving";
+  if (shipmentStatus === "Arrived" || shipmentStatus === "Arrived at Prep" || shipmentStatus === "Receiving") return "Arrived";
   return "In Transit";
 }
 
-function rowStatusTone(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: string) {
-  const status = rowStatus(item, rowIssue, shipmentStatus);
+function rowStatusTone(item: ShipmentItem, shipmentStatus?: string) {
+  const status = rowStatus(item, shipmentStatus);
   if (status === "Available") return "emerald";
-  if (status === "Receiving") return "orange";
-  if (status === "Issue") return "rose";
+  if (status === "Arrived") return "orange";
+  if (status === "Need Attention") return "rose";
   return "blue";
 }
 

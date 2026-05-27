@@ -29,7 +29,7 @@ as $$
       and shipment.client_id = public.current_client_id()
       and shipment.deleted_at is null
       and shipment.archived_at is null
-      and status.name in ('Draft', 'Submitted', 'In Transit')
+      and status.name in ('In Transit')
   );
 $$;
 
@@ -46,7 +46,7 @@ as $$
     join public.statuses status on status.id = shipment.status_id
     where shipment.id = p_shipment_id
       and shipment.deleted_at is null
-      and status.name in ('Arrived at Prep', 'Receiving', 'Received', 'Completed', 'Issue', 'Posted to Inventory')
+      and status.name in ('Arrived', 'Received', 'Partially Received', 'Need Attention', 'Posted to Inventory')
   )
   or exists (
     select 1
@@ -121,7 +121,7 @@ begin
     raise exception 'Not allowed to delete this incoming shipment';
   end if;
 
-  if shipment_status not in ('Draft', 'Submitted', 'In Transit')
+  if shipment_status not in ('In Transit')
     or public.incoming_shipment_has_warehouse_activity(p_shipment_id) then
     raise exception 'This shipment already has warehouse activity and cannot be deleted. You can archive it instead.';
   end if;
@@ -195,8 +195,8 @@ begin
     raise exception 'Not allowed to edit this incoming shipment';
   end if;
 
-  if shipment_status not in ('Arrived at Prep', 'Receiving') then
-    raise exception 'Limited shipment edits are only allowed while receiving';
+  if shipment_status not in ('Arrived') then
+    raise exception 'Limited shipment edits are only allowed after arrival';
   end if;
 
   select

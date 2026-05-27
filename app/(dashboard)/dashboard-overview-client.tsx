@@ -300,9 +300,8 @@ export function DashboardOverviewClient() {
           loading={loading}
           items={[
             ["In Transit", overview.incomingShipments.inTransit, "blue"],
-            ["Arrived at Prep", overview.incomingShipments.arrived, "orange"],
-            ["Received", overview.incomingShipments.received, "emerald"],
-            ["Issue", overview.incomingShipments.issue, "rose"],
+            ["Need Attention", overview.incomingShipments.issue, "rose"],
+            ["Arrived / Received", overview.incomingShipments.arrived + overview.incomingShipments.received, "orange"],
           ]}
         />
         <CompactBlock
@@ -545,8 +544,8 @@ function CompactBlock({
 
 function shipmentStatusTone(status: string) {
   if (status === "Received") return "emerald";
-  if (status === "Issue" || status === "Received with Discrepancy") return "rose";
-  if (status === "Arrived at Prep" || status === "Pending Receiving") return "orange";
+  if (status === "Need Attention" || status === "Issue" || status === "Received with Discrepancy") return "rose";
+  if (status === "Arrived" || status === "Partially Received" || status === "Arrived at Prep" || status === "Pending Receiving") return "orange";
   return "blue";
 }
 
@@ -597,9 +596,9 @@ function countShipments(
 }
 
 function normalizeShipmentStatus(status: string) {
-  if (status === "Received") return "received" as const;
-  if (status === "Issue" || status === "Received with Discrepancy") return "issue" as const;
-  if (status === "Arrived at Prep" || status === "Pending Receiving" || status === "Partially Received") {
+  if (status === "Received" || status === "Completed") return "received" as const;
+  if (status === "Need Attention" || status === "Issue" || status === "Received with Discrepancy") return "issue" as const;
+  if (status === "Arrived" || status === "Arrived at Prep" || status === "Pending Receiving" || status === "Partially Received" || status === "Receiving") {
     return "arrived" as const;
   }
   return "inTransit" as const;

@@ -47,9 +47,10 @@ type Shipment = Tables<"incoming_shipments"> & {
 const statusTabs = [
   { label: "All", value: "all" },
   { label: "In Transit", value: "In Transit" },
-  { label: "Arrived / Receiving", value: "Arrived at Prep" },
+  { label: "Arrived", value: "Arrived" },
+  { label: "Partially Received", value: "Partially Received" },
   { label: "Received", value: "Received" },
-  { label: "Issue", value: "Issue" },
+  { label: "Need Attention", value: "Need Attention" },
 ];
 const lifecycleTabs = [
   { label: "Active", value: "active" },
@@ -155,8 +156,8 @@ export function IncomingShipmentsClient({
 
         const status = getDisplayStatus(shipment);
         if (status === "In Transit") totals.inTransit += 1;
-        if (status === "Arrived at Prep" || status === "Received") totals.arrivedReceived += 1;
-        if (status === "Issue") totals.needAttention += 1;
+        if (status === "Arrived" || status === "Received" || status === "Partially Received") totals.arrivedReceived += 1;
+        if (status === "Need Attention") totals.needAttention += 1;
         return totals;
       },
       { inTransit: 0, arrivedReceived: 0, needAttention: 0 },
@@ -169,7 +170,7 @@ export function IncomingShipmentsClient({
 
     const statusName = getDisplayStatus(shipment);
     const hasWarehouseActivity = hasShipmentWarehouseActivity(shipment);
-    const canDelete = ["Draft", "Submitted", "In Transit"].includes(shipment.statuses?.name ?? statusName) && !hasWarehouseActivity;
+    const canDelete = statusName === "In Transit" && !hasWarehouseActivity;
 
     if (canDelete) {
       const confirmed = window.confirm(
@@ -344,7 +345,7 @@ export function IncomingShipmentsClient({
         <section className="grid gap-4 sm:grid-cols-3">
           <ClientStat label="In Transit" value={shipmentStats.inTransit} sublabel="Shipments on the way" />
           <ClientStat label="Arrived / Received" value={shipmentStats.arrivedReceived} sublabel="At prep or completed" />
-          <ClientStat label="Need Attention" value={shipmentStats.needAttention} sublabel="Issue or discrepancy" />
+          <ClientStat label="Need Attention" value={shipmentStats.needAttention} sublabel="Manually flagged" />
         </section>
 
         <Panel title="Incoming Shipments">
@@ -362,7 +363,7 @@ export function IncomingShipmentsClient({
             >
               {statusTabs.map((tab) => (
                 <option key={tab.value} value={tab.value}>
-                  {tab.label === "Arrived at Prep" ? "Receiving" : tab.label}
+                  {tab.label}
                 </option>
               ))}
             </select>
@@ -421,7 +422,7 @@ export function IncomingShipmentsClient({
       <section className="grid gap-4 sm:grid-cols-3">
         <ClientStat label="In Transit" value={adminShipmentStats.inTransit} sublabel="Shipments on the way" />
         <ClientStat label="Arrived / Received" value={adminShipmentStats.arrivedReceived} sublabel="At prep or completed" />
-        <ClientStat label="Need Attention" value={adminShipmentStats.needAttention} sublabel="Issue or discrepancy" />
+        <ClientStat label="Need Attention" value={adminShipmentStats.needAttention} sublabel="Manually flagged" />
       </section>
 
       <Panel title="Incoming shipments">
@@ -609,7 +610,7 @@ function ClientShipmentsTable({
               <td className="truncate px-2.5 py-2.5 text-slate-600">{shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "-"}</td>
               <td className="truncate px-2.5 py-2.5 text-slate-600">{shipment.carrier || "-"}</td>
               <td className="px-2.5 py-2.5">
-                  <StatusBadge tone={statusTone(statusName)}>{statusName === "Arrived at Prep" ? "Receiving" : statusName}</StatusBadge>
+                  <StatusBadge tone={statusTone(statusName)}>{statusName}</StatusBadge>
               </td>
               <td className="px-2.5 py-2.5">
                 <div className="flex justify-end gap-0.5">
@@ -659,8 +660,8 @@ function hasShipmentWarehouseActivity(shipment: Shipment) {
 
   return (
     Boolean(shipment.archived_at) ||
-    ["Arrived at Prep", "Receiving", "Received", "Completed", "Issue", "Posted to Inventory"].includes(rawStatusName) ||
-    ["Arrived at Prep", "Received", "Issue"].includes(statusName) ||
+    ["Arrived", "Received", "Partially Received", "Need Attention", "Posted to Inventory"].includes(rawStatusName) ||
+    ["Arrived", "Received", "Partially Received", "Need Attention"].includes(statusName) ||
     shipment.incoming_items.some((item) => Boolean(item.inventory_posted_at)) ||
     shipment.incoming_tracking_boxes.some((box) => Boolean(box.inventory_posted_at))
   );
@@ -683,44 +684,41 @@ function formatProductSummary(shipment: Shipment) {
 }
 
 export function getDisplayStatus(shipment: Shipment) {
-  const summary = getShipmentSummary(shipment);
   const statusName = shipment.statuses?.name ?? "In Transit";
 
-  if (summary.issueCount > 0 || statusName === "Issue" || statusName === "Received with Discrepancy") {
-    return "Issue";
+  if (["Need Attention", "Issue", "Exception", "Received with Discrepancy"].includes(statusName)) {
+    return "Need Attention";
   }
 
   if (statusName === "Received" || statusName === "Completed") {
     return "Received";
   }
 
-  if (
-    statusName === "Receiving" ||
-    statusName === "Arrived at Prep" ||
-    statusName === "Pending Receiving" ||
-    statusName === "Partially Received" ||
-    statusName === "Delivered" ||
-    (summary.totalBoxes > 0 && summary.deliveredBoxes > 0)
-  ) {
-    return "Arrived at Prep";
+  if (statusName === "Partially Received") {
+    return "Partially Received";
+  }
+
+  if (["Arrived", "Receiving", "Arrived at Prep", "Pending Receiving", "Delivered"].includes(statusName)) {
+    return "Arrived";
   }
 
   return "In Transit";
 }
 
 function normalizeStatusFilter(value?: string) {
-  if (value === "pending_receiving" || value === "arrived_at_prep") return "Arrived at Prep";
+  if (value === "pending_receiving" || value === "arrived_at_prep" || value === "arrived") return "Arrived";
+  if (value === "partially_received") return "Partially Received";
   if (value === "received") return "Received";
   if (value === "in_transit") return "In Transit";
-  if (value === "discrepancy_issue" || value === "issue") return "Issue";
+  if (value === "discrepancy_issue" || value === "issue" || value === "need_attention") return "Need Attention";
   if (value === "archived") return "archived";
   return "all";
 }
 
 function statusTone(status: string) {
   if (status === "Received") return "emerald";
-  if (status === "Issue") return "rose";
-  if (status === "Arrived at Prep") return "orange";
+  if (status === "Need Attention") return "rose";
+  if (status === "Arrived" || status === "Partially Received") return "orange";
   return "blue";
 }
 

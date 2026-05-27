@@ -80,9 +80,9 @@ const emptyForm: ShipmentForm = {
   trackingLines: [emptyTrackingLine],
 };
 
-const intakeStatusNames = ["Draft", "Submitted", "In Transit", "Receiving", "Completed"];
-const fullClientEditStatusNames = ["Draft", "Submitted", "In Transit"];
-const limitedClientEditStatusNames = ["Arrived at Prep", "Receiving"];
+const incomingShipmentStatusNames = ["In Transit", "Arrived", "Received", "Partially Received", "Need Attention"];
+const fullClientEditStatusNames = ["In Transit"];
+const limitedClientEditStatusNames = ["Arrived"];
 const defaultCarrierNames = [
   "UPS",
   "FedEx",
@@ -124,8 +124,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const canEditProductLines = canFullyEditShipment;
   const canEditTrackingLines = canFullyEditShipment || (isClientPortal && limitedClientEditStatusNames.includes(shipmentStatusName));
   const visibleStatuses = useMemo(
-    () => isAdmin ? statuses : statuses.filter((status) => intakeStatusNames.includes(status.name) || status.id === form.status_id),
-    [form.status_id, isAdmin, statuses],
+    () => statuses.filter((status) => incomingShipmentStatusNames.includes(status.name) || status.id === form.status_id),
+    [form.status_id, statuses],
   );
   const visibleCarrierOptions = useMemo(() => {
     const options = carrierOptions.length > 0
