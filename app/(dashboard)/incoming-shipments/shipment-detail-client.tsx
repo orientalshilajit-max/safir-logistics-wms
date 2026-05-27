@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -54,14 +55,21 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setShipment(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const query = supabase
       .from("incoming_shipments")
       .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(*, products(id, product_name, sku, asin, barcode)), incoming_tracking_boxes(*)")
       .eq("id", shipmentId)
       .is("deleted_at", null);
 
-    if (isClientPortal && clientId) {
-      query.eq("client_id", clientId);
+    if (isClientPortal) {
+      query.eq("client_id", clientId as string);
     }
 
     const { data, error: shipmentError } = await query.single();

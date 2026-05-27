@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Json, Tables } from "@/app/types/database.types";
 import {
@@ -143,6 +144,16 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setClients([]);
+      setProducts([]);
+      setStatuses([]);
+      setCarrierOptions([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const clientsQuery = supabase
       .from("clients")
       .select("id, company_name")
@@ -170,16 +181,23 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       .order("sort_order")
       .order("name");
     const shipmentQuery = shipmentId
-      ? supabase
-        .from("incoming_shipments")
-        .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, inventory_posted_at, notes, status)")
-        .eq("id", shipmentId)
-        .single()
+      ? (() => {
+          let query = supabase
+            .from("incoming_shipments")
+            .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, inventory_posted_at, notes, status)")
+            .eq("id", shipmentId);
+
+          if (isClientPortal) {
+            query = query.eq("client_id", clientId as string);
+          }
+
+          return query.single();
+        })()
       : Promise.resolve({ data: null, error: null });
 
-    if (isClientPortal && clientId) {
-      clientsQuery.eq("id", clientId);
-      productsQuery.eq("client_id", clientId);
+    if (isClientPortal) {
+      clientsQuery.eq("id", clientId as string);
+      productsQuery.eq("client_id", clientId as string);
     }
 
     const [clientsResult, productsResult, statusesResult, carriersResult, shipmentResult] = await Promise.all([
@@ -244,7 +262,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       setShipmentStatusName("In Transit");
       setForm((current) => ({
         ...current,
-        client_id: isClientPortal && clientId ? clientId : current.client_id,
+        client_id: isClientPortal ? (clientId as string) : current.client_id,
         status_id: current.status_id || inTransitStatus?.id || "",
       }));
     }
@@ -357,6 +375,12 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       return;
     }
 
+    if (isClientPortal && (!clientId || form.client_id !== clientId)) {
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setSaving(false);
+      return;
+    }
+
     if (!isAdmin && shipmentId && !canEditLimitedClientFields) {
       setError("This shipment already has warehouse activity and cannot be edited.");
       setSaving(false);
@@ -460,7 +484,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     };
 
     const shipmentResult = shipmentId
-      ? await supabase.from("incoming_shipments").update(shipmentPayload).eq("id", shipmentId).select("id").single()
+      ? await supabase.from("incoming_shipments").update(shipmentPayload).eq("id", shipmentId).eq("client_id", form.client_id).select("id").single()
       : await supabase.from("incoming_shipments").insert(shipmentPayload).select("id").single();
 
     if (shipmentResult.error || !shipmentResult.data) {

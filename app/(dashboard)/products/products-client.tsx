@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import { EmptyState, ErrorBanner, inputClassName, LoadingState, Panel, StatusBadge } from "@/app/components/wms-ui";
@@ -41,6 +42,17 @@ export function ProductsClient() {
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setProducts([]);
+      setClients([]);
+      setInventoryHistory([]);
+      setIncomingHistory([]);
+      setRequestHistory([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     let productsQuery = supabase
       .from("products")
       .select("*, clients(id, company_name)")
@@ -63,11 +75,11 @@ export function ProductsClient() {
       .select("product_id, service_requests!inner(client_id)")
       .is("deleted_at", null);
 
-    if (isClientPortal && clientId) {
-      productsQuery = productsQuery.eq("client_id", clientId);
-      inventoryQuery = inventoryQuery.eq("client_id", clientId);
-      incomingQuery = incomingQuery.eq("incoming_shipments.client_id", clientId);
-      requestQuery = requestQuery.eq("service_requests.client_id", clientId);
+    if (isClientPortal) {
+      productsQuery = productsQuery.eq("client_id", clientId as string);
+      inventoryQuery = inventoryQuery.eq("client_id", clientId as string);
+      incomingQuery = incomingQuery.eq("incoming_shipments.client_id", clientId as string);
+      requestQuery = requestQuery.eq("service_requests.client_id", clientId as string);
     }
 
     const [productsResult, clientsResult, inventoryResult, incomingResult, requestResult] = await Promise.all([

@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -96,6 +97,27 @@ export function DocumentFormClient({
     setLoading(true);
     setError(null);
 
+    if (!isAdmin && !clientId) {
+      setClients([]);
+      setDocument(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
+    let documentQuery = documentId
+      ? supabase
+          .from("attachments")
+          .select("*")
+          .eq("id", documentId)
+          .eq("entity_type", "documents")
+          .is("deleted_at", null)
+      : null;
+
+    if (documentQuery && !isAdmin) {
+      documentQuery = documentQuery.eq("client_id", clientId as string).eq("file_scope", "client_specific");
+    }
+
     const [clientsResult, documentResult] = await Promise.all([
       isAdmin
         ? supabase
@@ -104,15 +126,7 @@ export function DocumentFormClient({
           .is("deleted_at", null)
           .order("company_name")
         : Promise.resolve({ data: [], error: null }),
-      documentId
-        ? supabase
-          .from("attachments")
-          .select("*")
-          .eq("id", documentId)
-          .eq("entity_type", "documents")
-          .is("deleted_at", null)
-          .single()
-        : Promise.resolve({ data: null, error: null }),
+      documentQuery ? documentQuery.single() : Promise.resolve({ data: null, error: null }),
     ]);
 
     if (clientsResult.error) {
@@ -138,7 +152,7 @@ export function DocumentFormClient({
     }
 
     setLoading(false);
-  }, [documentId, isAdmin]);
+  }, [clientId, documentId, isAdmin]);
 
   const loadRelatedOptions = useCallback(async (nextClientId: string) => {
     if (!nextClientId) {
@@ -230,7 +244,12 @@ export function DocumentFormClient({
     if (saving) return;
 
     if (effectiveFileScope === "client_specific" && !effectiveClientId) {
-      setError(isAdmin ? "Choose a client before saving." : "Your account is missing a client assignment.");
+      setError(isAdmin ? "Choose a client before saving." : CLIENT_ACCOUNT_LINK_ERROR);
+      return;
+    }
+
+    if (!isAdmin && effectiveClientId !== clientId) {
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
       return;
     }
 
@@ -266,10 +285,16 @@ export function DocumentFormClient({
     };
 
     if (documentId) {
-      const { error: updateError } = await supabase
+      let updateQuery = supabase
         .from("attachments")
         .update(metadata)
         .eq("id", documentId);
+
+      if (!isAdmin) {
+        updateQuery = updateQuery.eq("client_id", effectiveClientId);
+      }
+
+      const { error: updateError } = await updateQuery;
 
       if (updateError) {
         setError(updateError.message);

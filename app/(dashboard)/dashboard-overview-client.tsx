@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import { ErrorBanner, inputClassName, Panel, StatusBadge } from "@/app/components/wms-ui";
 
@@ -101,6 +102,15 @@ export function DashboardOverviewClient() {
       setLoading(true);
       setError(null);
 
+      if (isClientPortal && !clientId) {
+        setOverview(initialOverview);
+        setClientShipments([]);
+        setClientInventory([]);
+        setClientActivity([]);
+        setError(CLIENT_ACCOUNT_LINK_ERROR);
+        return;
+      }
+
       const clientsQuery = supabase
         .from("clients")
         .select("id, status, login_status, created_at")
@@ -122,12 +132,12 @@ export function DashboardOverviewClient() {
         .select("id, status, total_amount, paid_amount, created_at, issue_date, due_date")
         .is("deleted_at", null);
 
-      if (isClientPortal && clientId) {
-        clientsQuery.eq("id", clientId);
-        shipmentsQuery.eq("client_id", clientId);
-        inventoryQuery.eq("client_id", clientId);
-        requestsQuery.eq("client_id", clientId);
-        invoicesQuery.eq("client_id", clientId);
+      if (isClientPortal) {
+        clientsQuery.eq("id", clientId as string);
+        shipmentsQuery.eq("client_id", clientId as string);
+        inventoryQuery.eq("client_id", clientId as string);
+        requestsQuery.eq("client_id", clientId as string);
+        invoicesQuery.eq("client_id", clientId as string);
       }
 
       const [clients, incomingShipments, inventory, requests, invoices] = await Promise.all([
@@ -174,26 +184,26 @@ export function DashboardOverviewClient() {
           .reduce((total, invoice) => total + Number(invoice.paid_amount ?? invoice.total_amount ?? 0), 0),
       });
 
-      if (isClientPortal && clientId) {
+      if (isClientPortal) {
         const [shipmentDetails, inventoryDetails, activityDetails] = await Promise.all([
           supabase
             .from("incoming_shipments")
             .select("id, created_at, number_of_boxes, tracking_numbers, statuses(name), incoming_items(expected_quantity, products(product_name))")
-            .eq("client_id", clientId)
+            .eq("client_id", clientId as string)
             .is("deleted_at", null)
             .order("created_at", { ascending: false })
             .limit(5),
           supabase
             .from("inventory")
             .select("id, available_qty, reserved_qty, processing_qty, products!inventory_product_id_fkey(product_name, sku)")
-            .eq("client_id", clientId)
+            .eq("client_id", clientId as string)
             .is("deleted_at", null)
             .order("updated_at", { ascending: false })
             .limit(5),
           supabase
             .from("activity_logs")
             .select("id, action, created_at, metadata")
-            .eq("client_id", clientId)
+            .eq("client_id", clientId as string)
             .order("created_at", { ascending: false })
             .limit(5),
         ]);

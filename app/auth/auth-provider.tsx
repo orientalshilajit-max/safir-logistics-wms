@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 import {
   AUTH_REFRESH_COOKIE,
   AUTH_TOKEN_COOKIE,
-  getUserClientId,
+  getCurrentClientId,
   getUserRole,
   type UserRole,
 } from "@/app/lib/auth";
@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const role = getUserRole(user);
-    const activeClientId = getUserClientId(user);
+    const activeClientId = getCurrentClientId(user);
 
     if (!session?.access_token || role !== "client" || !activeClientId) {
       return;
@@ -93,7 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role: getUserRole(user),
       session,
       user,
-      clientId: getUserClientId(user),
+      clientId: getCurrentClientId(user),
       signOut: async () => {
         setError(null);
         const { error: signOutError } = await supabase.auth.signOut();

@@ -16,6 +16,7 @@ import {
   QuickFilterButton,
   StatusBadge,
 } from "@/app/components/wms-ui";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 
@@ -54,6 +55,14 @@ export function OutboundShipmentsClient() {
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setRequests([]);
+      setSelectedRequestId(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const requestQuery = supabase
       .from("service_requests")
       .select("*, clients(id, company_name), request_boxes(id, box_number, tracking_number), shipping_labels(id, label_category, request_box_id, box_number)")
@@ -61,8 +70,8 @@ export function OutboundShipmentsClient() {
       .in("status", outboundStatuses)
       .order("updated_at", { ascending: false });
 
-    if (isClientPortal && clientId) {
-      requestQuery.eq("client_id", clientId);
+    if (isClientPortal) {
+      requestQuery.eq("client_id", clientId as string);
     }
 
     const { data, error: requestsError } = await requestQuery;

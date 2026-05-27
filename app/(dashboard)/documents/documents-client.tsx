@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -63,6 +64,31 @@ export function DocumentsClient() {
     setLoading(true);
     setError(null);
 
+    if (!isAdmin && !clientId) {
+      setClients([]);
+      setDocuments([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
+    let documentsQuery = supabase
+      .from("attachments")
+      .select(
+        "*, clients(id, company_name), products(id, product_name, sku), incoming_shipments(id, carrier, tracking_numbers), service_requests(id, request_number), invoices(id, invoice_number)",
+      )
+      .eq("entity_type", "documents")
+      .is("deleted_at", null)
+      .is("archived_at", null)
+      .order("created_at", { ascending: false });
+
+    if (!isAdmin) {
+      documentsQuery = documentsQuery
+        .eq("client_id", clientId as string)
+        .eq("file_scope", "client_specific")
+        .or(`visible_to_client.eq.true,uploaded_by_user_id.eq.${user?.id ?? ""}`);
+    }
+
     const [clientsResult, documentsResult] = await Promise.all([
       isAdmin
         ? supabase
@@ -71,15 +97,7 @@ export function DocumentsClient() {
           .is("deleted_at", null)
           .order("company_name")
         : Promise.resolve({ data: [], error: null }),
-      supabase
-        .from("attachments")
-        .select(
-          "*, clients(id, company_name), products(id, product_name, sku), incoming_shipments(id, carrier, tracking_numbers), service_requests(id, request_number), invoices(id, invoice_number)",
-        )
-        .eq("entity_type", "documents")
-        .is("deleted_at", null)
-        .is("archived_at", null)
-        .order("created_at", { ascending: false }),
+      documentsQuery,
     ]);
 
     if (clientsResult.error) {
@@ -103,7 +121,7 @@ export function DocumentsClient() {
     }
 
     setLoading(false);
-  }, [isAdmin]);
+  }, [clientId, isAdmin, user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -160,10 +178,9 @@ export function DocumentsClient() {
 
     return filteredDocuments.filter((document) => {
       const allowed =
-        (document.file_scope === "global" && document.visible_to_client) ||
-        (document.file_scope === "client_specific" &&
-          document.client_id === clientId &&
-          (document.visible_to_client || document.uploaded_by_user_id === user?.id));
+        document.file_scope === "client_specific" &&
+        document.client_id === clientId &&
+        (document.visible_to_client || document.uploaded_by_user_id === user?.id);
       const matchesQuery =
         !normalized ||
         document.file_name.toLowerCase().includes(normalized) ||

@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -108,6 +109,14 @@ export function InvoicesClient() {
 
   const loadInvoices = useCallback(async () => {
     setError(null);
+    if (isClientPortal && !clientId) {
+      setInvoices([]);
+      setSelectedInvoiceId(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     if (isAdmin) {
       const { error: overdueError } = await supabase.rpc("mark_overdue_invoices");
       if (overdueError) {
@@ -122,8 +131,8 @@ export function InvoicesClient() {
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
-    if (isClientPortal && clientId) {
-      invoicesQuery.eq("client_id", clientId);
+    if (isClientPortal) {
+      invoicesQuery.eq("client_id", clientId as string);
     }
 
     const { data, error: loadError } = await invoicesQuery;

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUserClientId, getUserRole } from "@/app/lib/auth";
+import { CLIENT_ACCOUNT_LINK_ERROR, getCurrentClientId, getUserRole } from "@/app/lib/auth";
 import {
   createSupabaseAdminClient,
   createSupabaseServerClient,
@@ -26,10 +26,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  const clientId = getUserClientId(user);
+  const clientId = getCurrentClientId(user);
 
   if (!clientId) {
-    return NextResponse.json({ error: "Client id missing from session." }, { status: 400 });
+    return NextResponse.json({ error: CLIENT_ACCOUNT_LINK_ERROR }, { status: 400 });
   }
 
   const adminClient = createSupabaseAdminClient();

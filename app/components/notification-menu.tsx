@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 
@@ -12,7 +13,7 @@ type NotificationWithRead = Notification & {
 };
 
 export function NotificationMenu() {
-  const { user } = useAuth();
+  const { clientId, role, user } = useAuth();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationWithRead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,13 +31,26 @@ export function NotificationMenu() {
       return;
     }
 
+    if (role === "client" && !clientId) {
+      setNotifications([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
+    const notificationsQuery = supabase
+      .from("notifications")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+    if (role === "client") {
+      notificationsQuery.eq("client_id", clientId as string);
+    }
+
     const [notificationsResult, readsResult] = await Promise.all([
-      supabase
-        .from("notifications")
-        .select("*")
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(12),
+      notificationsQuery,
       supabase
         .from("user_notifications")
         .select("*")
@@ -70,7 +84,7 @@ export function NotificationMenu() {
     );
     setError(null);
     setLoading(false);
-  }, [user]);
+  }, [clientId, role, user]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadNotifications(), 0);

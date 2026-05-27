@@ -5,6 +5,9 @@ import { DashboardShell } from "@/app/components/dashboard-shell";
 import { AUTH_TOKEN_COOKIE } from "@/app/lib/auth";
 import { createSupabaseServerClient } from "@/app/lib/supabase-server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function ProtectedDashboardLayout({
   children,
 }: {

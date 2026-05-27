@@ -3,6 +3,7 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -56,14 +57,21 @@ export function RequestsClient() {
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setRequests([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const queryBuilder = supabase
       .from("service_requests")
       .select("*, clients(id, company_name), request_items(requested_quantity, products(product_name, sku))")
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
-    if (isClientPortal && clientId) {
-      queryBuilder.eq("client_id", clientId);
+    if (isClientPortal) {
+      queryBuilder.eq("client_id", clientId as string);
     }
 
     const { data, error: requestsError } = await queryBuilder;

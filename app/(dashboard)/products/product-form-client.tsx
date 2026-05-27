@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables, TablesInsert } from "@/app/types/database.types";
 import { Button, ErrorBanner, Field, inputClassName, LoadingState, Panel, textAreaClassName } from "@/app/components/wms-ui";
@@ -60,22 +61,37 @@ export function ProductFormClient({ productId }: { productId?: string }) {
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setClients([]);
+      setForm(emptyForm);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const clientsQuery = supabase
       .from("clients")
       .select("id, company_name")
       .is("deleted_at", null)
       .order("company_name");
     const productQuery = productId
-      ? supabase
-          .from("products")
-          .select("*")
-          .eq("id", productId)
-          .is("deleted_at", null)
-          .single()
+      ? (() => {
+          let query = supabase
+            .from("products")
+            .select("*")
+            .eq("id", productId)
+            .is("deleted_at", null);
+
+          if (isClientPortal) {
+            query = query.eq("client_id", clientId as string);
+          }
+
+          return query.single();
+        })()
       : Promise.resolve({ data: null, error: null });
 
-    if (isClientPortal && clientId) {
-      clientsQuery.eq("id", clientId);
+    if (isClientPortal) {
+      clientsQuery.eq("id", clientId as string);
     }
 
     const [clientsResult, productResult] = await Promise.all([
@@ -109,8 +125,8 @@ export function ProductFormClient({ productId }: { productId?: string }) {
         product_name: product.product_name,
         sku: product.sku ?? "",
       });
-    } else if (isClientPortal && clientId) {
-      setForm((current) => ({ ...current, client_id: clientId }));
+    } else if (isClientPortal) {
+      setForm((current) => ({ ...current, client_id: clientId as string }));
     }
 
     setLoading(false);
@@ -139,6 +155,11 @@ export function ProductFormClient({ productId }: { productId?: string }) {
 
     if (!form.client_id || !form.product_name.trim()) {
       setError("Client and product name are required.");
+      return;
+    }
+
+    if (isClientPortal && (!clientId || form.client_id !== clientId)) {
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
       return;
     }
 
@@ -191,7 +212,7 @@ export function ProductFormClient({ productId }: { productId?: string }) {
     }
 
     const result = productId
-      ? await supabase.from("products").update(payload).eq("id", productId)
+      ? await supabase.from("products").update(payload).eq("id", productId).eq("client_id", form.client_id)
       : await supabase.from("products").insert(payload).select("id").single();
 
     if (result.error) {

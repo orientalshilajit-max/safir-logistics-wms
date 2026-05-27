@@ -9,6 +9,7 @@ import {
   type RequestBoxOption,
 } from "@/app/components/label-manager";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -43,13 +44,14 @@ type ServiceRequest = Tables<"service_requests"> & {
 };
 
 export function RequestDetailClient({ requestId }: { requestId: string }) {
-  const { role } = useAuth();
+  const { clientId, role } = useAuth();
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = role === "admin";
+  const isClientPortal = role === "client";
   const missingLabels = useMemo(
     () =>
       request
@@ -62,12 +64,24 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
     setLoading(true);
     setError(null);
 
-    const { data, error: requestError } = await supabase
+    if (isClientPortal && !clientId) {
+      setRequest(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
+    const query = supabase
       .from("service_requests")
       .select("*, clients(id, company_name), request_items(*, products(id, product_name, sku, fnsku), inventory(id, available_qty, reserved_qty), request_item_services(*, services(name, pricing_type))), request_boxes(id, box_number, tracking_number), shipping_labels(id, label_category, request_box_id, box_number)")
       .eq("id", requestId)
-      .is("deleted_at", null)
-      .single();
+      .is("deleted_at", null);
+
+    if (isClientPortal) {
+      query.eq("client_id", clientId as string);
+    }
+
+    const { data, error: requestError } = await query.single();
 
     if (requestError || !data) {
       setError(requestError?.message ?? "Unable to load request.");
@@ -77,7 +91,7 @@ export function RequestDetailClient({ requestId }: { requestId: string }) {
     }
 
     setLoading(false);
-  }, [requestId]);
+  }, [clientId, isClientPortal, requestId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadRequest(), 0);

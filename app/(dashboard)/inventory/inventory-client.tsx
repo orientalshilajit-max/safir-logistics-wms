@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -104,14 +105,21 @@ export function InventoryClient() {
   );
 
   const loadInventory = useCallback(async () => {
+    if (isClientPortal && !clientId) {
+      setRows([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const query = supabase
       .from("inventory")
       .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin, barcode, photo_url)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 
-    if (isClientPortal && clientId) {
-      query.eq("client_id", clientId);
+    if (isClientPortal) {
+      query.eq("client_id", clientId as string);
     }
 
     const { data, error: loadError } = await query;

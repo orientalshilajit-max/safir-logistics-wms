@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -210,6 +211,16 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
     setError(null);
     setLoading(true);
 
+    if (role === "client" && !clientId) {
+      setClients([]);
+      setInventory([]);
+      setOverrides([]);
+      setExistingRequest(null);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const clientsQuery = supabase
       .from("clients")
       .select("id, company_name")
@@ -233,10 +244,10 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
       .is("deleted_at", null)
       .eq("active", true);
 
-    if (role === "client" && clientId) {
-      clientsQuery.eq("id", clientId);
-      inventoryQuery.eq("client_id", clientId);
-      overridesQuery.eq("client_id", clientId);
+    if (role === "client") {
+      clientsQuery.eq("id", clientId as string);
+      inventoryQuery.eq("client_id", clientId as string);
+      overridesQuery.eq("client_id", clientId as string);
     }
 
     const [clientsResult, inventoryResult, servicesResult, overridesResult] =
@@ -255,12 +266,17 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
     else setOverrides(overridesResult.data ?? []);
 
     if (requestId) {
-      const { data: request, error: requestError } = await supabase
+      const requestQuery = supabase
         .from("service_requests")
         .select("*, request_items(id, inventory_id, product_id, requested_quantity, notes, fnsku, request_item_services(id, service_id))")
         .eq("id", requestId)
-        .is("deleted_at", null)
-        .single();
+        .is("deleted_at", null);
+
+      if (role === "client") {
+        requestQuery.eq("client_id", clientId as string);
+      }
+
+      const { data: request, error: requestError } = await requestQuery.single();
 
       if (requestError || !request) {
         setError(requestError?.message ?? "Unable to load request.");
@@ -269,8 +285,8 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
         setExistingRequest(typedRequest);
         setForm(formFromRequest(typedRequest));
       }
-    } else if (role === "client" && clientId) {
-      setForm((current) => ({ ...current, client_id: clientId }));
+    } else if (role === "client") {
+      setForm((current) => ({ ...current, client_id: clientId as string }));
     }
 
     setLoading(false);
@@ -322,6 +338,12 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
 
     if (!client_id) {
       setError("Select a client before submitting a request.");
+      setSaving(false);
+      return;
+    }
+
+    if (role === "client" && (!clientId || client_id !== clientId)) {
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
       setSaving(false);
       return;
     }
@@ -468,7 +490,8 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
         notes: buildRequestNotes(requestForm),
         estimated_total: estimatedTotal,
       })
-      .eq("id", request.id);
+      .eq("id", request.id)
+      .eq("client_id", client_id);
 
     if (requestError) return requestError.message;
 
@@ -519,6 +542,7 @@ export function RequestFormClient({ requestId }: { requestId?: string }) {
       .from("inventory")
       .select("id, client_id, available_qty, product_id, products!inventory_product_id_fkey(product_name)")
       .eq("id", requestForm.inventory_id)
+      .eq("client_id", client_id)
       .is("deleted_at", null)
       .single();
 

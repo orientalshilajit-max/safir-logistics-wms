@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
@@ -77,15 +78,27 @@ export function LabelManager({
       return;
     }
 
+    if (role === "client" && !clientId) {
+      setLabels([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
-    const { data, error: labelsError } = await supabase
+    const labelsQuery = supabase
       .from("shipping_labels")
       .select("*")
       .eq("service_request_id", serviceRequestId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
+
+    if (role === "client") {
+      labelsQuery.eq("client_id", clientId as string);
+    }
+
+    const { data, error: labelsError } = await labelsQuery;
 
     if (labelsError) {
       setError(labelsError.message);
@@ -113,7 +126,7 @@ export function LabelManager({
 
     setLabels(labelsWithPreviews);
     setLoading(false);
-  }, [serviceRequestId]);
+  }, [clientId, role, serviceRequestId]);
 
   useEffect(() => {
     let active = true;
@@ -209,7 +222,7 @@ export function LabelManager({
       .createSignedUrl(storagePath, 60 * 60);
 
     const { error: insertError } = await supabase.from("shipping_labels").insert({
-      client_id: clientId,
+      client_id: clientId as string,
       service_request_id: serviceRequestId,
       request_box_id: requestBoxId || null,
       entity_type: "service_requests",

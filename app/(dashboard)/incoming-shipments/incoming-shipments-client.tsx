@@ -12,6 +12,7 @@ import {
   StatusBadge,
 } from "@/app/components/wms-ui";
 import { useAuth } from "@/app/auth/auth-provider";
+import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import { ArchiveIcon, PencilIcon, RestoreIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
@@ -80,13 +81,20 @@ export function IncomingShipmentsClient({
     setLoading(true);
     setError(null);
 
+    if (isClientPortal && !clientId) {
+      setShipments([]);
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      setLoading(false);
+      return;
+    }
+
     const shipmentsQuery = supabase
       .from("incoming_shipments")
       .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id, expected_quantity, expected_boxes, received_quantity, received_boxes, damaged_quantity, missing_quantity, is_unexpected, inventory_posted_at, notes, products(product_name, sku, asin, barcode)), incoming_tracking_boxes(id, tracking_number, status, inventory_posted_at, box_count, notes, carrier)")
       .order("created_at", { ascending: false });
 
-    if (isClientPortal && clientId) {
-      shipmentsQuery.eq("client_id", clientId);
+    if (isClientPortal) {
+      shipmentsQuery.eq("client_id", clientId as string);
     }
 
     if (isClientPortal) {
