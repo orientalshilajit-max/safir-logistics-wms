@@ -78,16 +78,17 @@ export function InventoryClient() {
       const productName = row.products?.product_name ?? "";
       const sku = row.products?.sku ?? "";
       const asin = row.products?.asin ?? "";
+      const barcode = row.products?.barcode ?? "";
       const matchesSearch =
         !normalized ||
         productName.toLowerCase().includes(normalized) ||
         sku.toLowerCase().includes(normalized) ||
-        asin.toLowerCase().includes(normalized);
+        asin.toLowerCase().includes(normalized) ||
+        barcode.toLowerCase().includes(normalized);
       const matchesProduct = productFilter === "all" || row.product_id === productFilter;
       const matchesStock =
         stockFilter === "all" ||
         (stockFilter === "available" && row.available_qty > 0) ||
-        (stockFilter === "reserved" && row.reserved_qty > 0) ||
         (stockFilter === "damaged" && row.damaged_qty > 0);
 
       return matchesSearch && matchesProduct && matchesStock;
@@ -176,7 +177,7 @@ export function InventoryClient() {
 
   if (isClientPortal) {
     const incomingUnits = rows.reduce((sum, row) => sum + Math.max(row.expected_qty - row.received_qty, 0), 0);
-    const storageBoxes = rows.filter((row) => row.available_qty + row.reserved_qty + row.processing_qty > 0).length;
+    const totalUnitsInStock = rows.reduce((sum, row) => sum + row.available_qty + row.reserved_qty + row.processing_qty, 0);
 
     return (
       <div className="space-y-5">
@@ -186,12 +187,10 @@ export function InventoryClient() {
           <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Inventory</h2>
         </div>
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Metric label="Total Units in Stock" value={totals.available} />
-          <Metric label="Reserved Units" value={rows.reduce((sum, row) => sum + row.reserved_qty, 0)} />
+        <section className="grid gap-4 sm:grid-cols-3">
+          <Metric label="Total Units in Stock" value={totalUnitsInStock} />
           <Metric label="Incoming Units" value={incomingUnits} />
-          <Metric label="Units in Process" value={rows.reduce((sum, row) => sum + row.processing_qty, 0)} />
-          <Metric label="Total Storage / Boxes" value={storageBoxes} />
+          <Metric label="Damaged" value={totals.damaged} />
         </section>
 
         <Panel title="Inventory">
@@ -209,7 +208,6 @@ export function InventoryClient() {
             >
               <option value="all">All stock</option>
               <option value="available">Available</option>
-              <option value="reserved">Reserved</option>
               <option value="damaged">Damaged</option>
             </select>
             <select
@@ -232,18 +230,16 @@ export function InventoryClient() {
             <EmptyState title="No inventory found" body="Received inventory will appear here." />
           ) : (
             <div className="max-h-[42rem] overflow-auto">
-              <table className="w-full min-w-[1120px] text-left text-sm tabular-nums">
+              <table className="w-full text-left text-sm tabular-nums">
                 <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Product</th>
                     <th className="px-4 py-3 font-semibold">SKU</th>
                     <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
                     <th className="px-4 py-3 font-semibold">In Stock Units</th>
-                    <th className="px-4 py-3 font-semibold">Reserved Units</th>
                     <th className="px-4 py-3 font-semibold">Incoming Units</th>
-                    <th className="px-4 py-3 font-semibold">In Process Units</th>
+                    <th className="px-4 py-3 font-semibold">Damaged Units</th>
                     <th className="px-4 py-3 font-semibold">Available Units</th>
-                    <th className="px-4 py-3 font-semibold">Storage Boxes</th>
                     <th className="px-4 py-3 font-semibold">Last Updated</th>
                   </tr>
                 </thead>
@@ -261,11 +257,9 @@ export function InventoryClient() {
                         <td className="px-3 py-2.5 text-slate-600">{row.products?.sku ?? "-"}</td>
                         <td className="px-3 py-2.5 text-slate-600">{row.products?.asin ?? row.products?.barcode ?? "-"}</td>
                         <td className="px-3 py-2.5 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.reserved_qty}</td>
                         <td className="px-3 py-2.5 text-slate-600">{incoming}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.processing_qty}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{row.damaged_qty}</td>
                         <td className="px-3 py-2.5 font-semibold text-emerald-700">{row.available_qty}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.available_qty > 0 ? 1 : 0}</td>
                         <td className="px-3 py-2.5 text-slate-600">{formatDate(row.updated_at)}</td>
                       </tr>
                     );
