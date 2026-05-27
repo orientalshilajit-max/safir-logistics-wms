@@ -105,6 +105,9 @@ export function InventoryClient() {
   );
 
   const loadInventory = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
     if (isClientPortal && !clientId) {
       setRows([]);
       setError(CLIENT_ACCOUNT_LINK_ERROR);
@@ -127,6 +130,7 @@ export function InventoryClient() {
     if (loadError) {
       setError(loadError.message);
     } else {
+      setError(null);
       setRows((data ?? []) as InventoryRow[]);
     }
 

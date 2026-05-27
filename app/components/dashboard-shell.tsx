@@ -11,9 +11,18 @@ import type { UserRole } from "@/app/lib/auth";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { role } = useAuth();
+  const { loading, role } = useAuth();
   const visibleRoutes = getVisibleRoutes(role);
   const isClientPortal = role === "client";
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-medium text-slate-500">
+        Loading account...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="flex min-h-screen">

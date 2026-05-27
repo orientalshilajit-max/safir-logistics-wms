@@ -27,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [linkedClientId, setLinkedClientId] = useState<string | null>(null);
+  const [clientLinkFailed, setClientLinkFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(data.session);
         setUser(data.session?.user ?? null);
         setLinkedClientId(null);
+        setClientLinkFailed(false);
         syncAuthCookies(data.session);
       })
       .finally(() => {
@@ -61,6 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
       setLinkedClientId(null);
+      setClientLinkFailed(false);
       syncAuthCookies(nextSession);
       setLoading(false);
     });
@@ -88,10 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const body = (await response.json().catch(() => ({}))) as { client_id?: string };
 
         if (!response.ok || !body.client_id) {
+          setClientLinkFailed(true);
           return;
         }
-
-        setLinkedClientId(body.client_id);
 
         const { data } = await supabase.auth.refreshSession();
         if (data.session) {
@@ -99,20 +101,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(data.session.user);
           syncAuthCookies(data.session);
         }
+
+        setLinkedClientId(body.client_id);
+        setClientLinkFailed(false);
       })
       .catch((syncError) => {
         console.error("[client-active-sync]", syncError);
+        setClientLinkFailed(true);
       });
   }, [session?.access_token, user]);
+
+  const role = getUserRole(user);
+  const activeClientId = getCurrentClientId(user) ?? linkedClientId;
+  const clientLinkPending = Boolean(session?.access_token && role === "client" && !activeClientId && !clientLinkFailed);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       error,
-      loading,
-      role: getUserRole(user),
+      loading: loading || clientLinkPending,
+      role,
       session,
       user,
-      clientId: getCurrentClientId(user) ?? linkedClientId,
+      clientId: activeClientId,
       signOut: async () => {
         setError(null);
         const { error: signOutError } = await supabase.auth.signOut();
@@ -123,11 +133,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setLinkedClientId(null);
+        setClientLinkFailed(false);
         syncAuthCookies(null);
         window.location.assign("/login");
       },
     }),
-    [error, linkedClientId, loading, session, user],
+    [activeClientId, clientLinkPending, error, loading, role, session, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

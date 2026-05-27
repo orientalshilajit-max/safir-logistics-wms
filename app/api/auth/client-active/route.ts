@@ -34,19 +34,28 @@ export async function POST(request: NextRequest) {
   }
 
   let resolvedClient: ClientLink | null;
+  const failedLookups: string[] = [];
 
   try {
-    resolvedClient = await resolveClientForUser(user, adminClient);
+    resolvedClient = await resolveClientForUser(user, adminClient, failedLookups);
   } catch (resolveError) {
     console.error("[client-active-sync]", {
       action: "resolve client",
       user_id: user.id,
+      email: user.email ?? null,
+      failed_lookups: failedLookups,
       error: resolveError,
     });
     return NextResponse.json({ error: CLIENT_ACCOUNT_LINK_ERROR }, { status: 400 });
   }
 
   if (!resolvedClient) {
+    console.error("[client-active-sync]", {
+      action: "client link failed",
+      user_id: user.id,
+      email: user.email ?? null,
+      failed_lookups: failedLookups,
+    });
     return NextResponse.json(
       { error: CLIENT_ACCOUNT_LINK_ERROR },
       { status: 400 },
@@ -102,7 +111,11 @@ type ClientLink = {
   id: string;
 };
 
-async function resolveClientForUser(user: User, adminClient: AdminClient): Promise<ClientLink | null> {
+async function resolveClientForUser(
+  user: User,
+  adminClient: AdminClient,
+  failedLookups: string[],
+): Promise<ClientLink | null> {
   const metadataClientId = getCurrentClientId(user);
 
   if (metadataClientId) {
@@ -116,6 +129,10 @@ async function resolveClientForUser(user: User, adminClient: AdminClient): Promi
     if (data) {
       return data;
     }
+
+    failedLookups.push("metadata_client_id_not_found");
+  } else {
+    failedLookups.push("metadata_client_id_missing");
   }
 
   const { data: linkedClient } = await adminClient
@@ -129,9 +146,12 @@ async function resolveClientForUser(user: User, adminClient: AdminClient): Promi
     return linkedClient;
   }
 
+  failedLookups.push("clients_auth_user_id_not_found");
+
   const normalizedEmail = user.email?.trim().toLowerCase();
 
   if (!normalizedEmail) {
+    failedLookups.push("auth_email_missing");
     return null;
   }
 
@@ -157,12 +177,14 @@ async function resolveClientForUser(user: User, adminClient: AdminClient): Promi
     }
 
     if (!emailClients || emailClients.length < pageSize) {
+      failedLookups.push("clients_email_not_found");
       return null;
     }
 
     offset += pageSize;
   }
 
+  failedLookups.push("clients_email_not_found");
   return null;
 }
 
