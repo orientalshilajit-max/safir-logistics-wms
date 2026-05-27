@@ -18,8 +18,9 @@ type ProductHistoryRow = {
   product_id: string;
 };
 
-type StatusFilter = "active" | "archived" | "all";
+type StatusFilter = "active" | "archived" | "deleted" | "all";
 type DateFilter = "all" | "today" | "week" | "month" | "year";
+type SortFilter = "client" | "product" | "updated" | "status";
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
@@ -34,6 +35,7 @@ export function ProductsClient() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [clientFilter, setClientFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [sortFilter, setSortFilter] = useState<SortFilter>("client");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -56,7 +58,6 @@ export function ProductsClient() {
     let productsQuery = supabase
       .from("products")
       .select("*, clients(id, company_name)")
-      .is("deleted_at", null)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
 
@@ -80,6 +81,10 @@ export function ProductsClient() {
       inventoryQuery = inventoryQuery.eq("client_id", clientId as string);
       incomingQuery = incomingQuery.eq("incoming_shipments.client_id", clientId as string);
       requestQuery = requestQuery.eq("service_requests.client_id", clientId as string);
+    }
+
+    if (isClientPortal) {
+      productsQuery = productsQuery.is("deleted_at", null);
     }
 
     const [productsResult, clientsResult, inventoryResult, incomingResult, requestResult] = await Promise.all([
@@ -147,29 +152,57 @@ export function ProductsClient() {
           product.asin?.toLowerCase().includes(normalized) ||
           product.barcode?.toLowerCase().includes(normalized) ||
           product.fnsku?.toLowerCase().includes(normalized);
+        const isDeleted = Boolean(product.deleted_at);
         const matchesStatus =
           statusFilter === "all" ||
-          (statusFilter === "active" && product.active) ||
-          (statusFilter === "archived" && !product.active);
+          (statusFilter === "active" && product.active && !isDeleted) ||
+          (statusFilter === "archived" && !product.active && !isDeleted) ||
+          (statusFilter === "deleted" && isDeleted);
         const matchesClient = !isAdmin || clientFilter === "all" || product.client_id === clientFilter;
         const matchesDate = dateFilter === "all" || isWithinDateFilter(product.updated_at ?? product.created_at, dateFilter);
 
         return matchesSearch && matchesStatus && matchesClient && matchesDate;
       })
-      .sort(compareProductsForDisplay);
-  }, [clientFilter, dateFilter, isAdmin, products, query, statusFilter]);
+      .sort((left, right) => compareProductsForDisplay(left, right, sortFilter));
+  }, [clientFilter, dateFilter, isAdmin, products, query, sortFilter, statusFilter]);
 
   const stats = useMemo(() => {
     return {
       total: products.length,
-      active: products.filter((product) => product.active).length,
-      archived: products.filter((product) => !product.active).length,
+      active: products.filter((product) => product.active && !product.deleted_at).length,
+      archived: products.filter((product) => !product.active && !product.deleted_at).length,
     };
   }, [products]);
+  const missingInventoryProductIds = useMemo(() => {
+    if (!isAdmin) return [];
+
+    const productIds = new Set(products.map((product) => product.id));
+
+    return Array.from(new Set(inventoryHistory.map((row) => row.product_id))).filter((productId) => !productIds.has(productId));
+  }, [inventoryHistory, isAdmin, products]);
 
   async function handleArchiveDelete(product: Product) {
     setError(null);
     setSuccess(null);
+
+    if (product.deleted_at) {
+      const shouldRestoreDeleted = window.confirm("Restore this deleted product?");
+      if (!shouldRestoreDeleted) return;
+
+      const { error: restoreDeletedError } = await supabase
+        .from("products")
+        .update({ active: true, deleted_at: null })
+        .eq("id", product.id);
+
+      if (restoreDeletedError) {
+        setError(restoreDeletedError.message);
+        return;
+      }
+
+      setSuccess("Product restored.");
+      await loadData();
+      return;
+    }
 
     if (!product.active) {
       const shouldRestore = window.confirm("Restore this product?");
@@ -243,6 +276,11 @@ export function ProductsClient() {
 
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />
+      {missingInventoryProductIds.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          {missingInventoryProductIds.length} inventory row{missingInventoryProductIds.length === 1 ? "" : "s"} reference product records that are not visible to this admin query. No inventory data was changed.
+        </div>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-3">
         <ProductStat icon={<CatalogIcon />} label="Total Products" helper="Catalog records" value={stats.total} />
@@ -251,7 +289,7 @@ export function ProductsClient() {
       </div>
 
       <Panel title="Product Catalog">
-        <div className={isAdmin ? "grid gap-3 lg:grid-cols-[12rem_minmax(0,1fr)_10rem_10rem]" : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]"}>
+        <div className={isAdmin ? "grid gap-3 lg:grid-cols-[12rem_minmax(0,1fr)_10rem_10rem_10rem]" : "grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem]"}>
           {isAdmin ? (
             <select className={inputClassName} value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
               <option value="all">All Clients</option>
@@ -277,15 +315,24 @@ export function ProductsClient() {
             <option value="all">All Products</option>
             <option value="active">Active</option>
             <option value="archived">Archived</option>
+            {isAdmin ? <option value="deleted">Deleted</option> : null}
           </select>
           {isAdmin ? (
-            <select className={inputClassName} value={dateFilter} onChange={(event) => setDateFilter(event.target.value as DateFilter)}>
-              <option value="all">All Dates</option>
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="year">This Year</option>
-            </select>
+            <>
+              <select className={inputClassName} value={dateFilter} onChange={(event) => setDateFilter(event.target.value as DateFilter)}>
+                <option value="all">All Dates</option>
+                <option value="today">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+              </select>
+              <select className={inputClassName} value={sortFilter} onChange={(event) => setSortFilter(event.target.value as SortFilter)}>
+                <option value="client">Sort: Client</option>
+                <option value="product">Sort: Product</option>
+                <option value="updated">Sort: Updated</option>
+                <option value="status">Sort: Status</option>
+              </select>
+            </>
           ) : null}
         </div>
 
@@ -294,11 +341,12 @@ export function ProductsClient() {
             <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="w-[7%] px-3 py-2 font-semibold">Image</th>
-                <th className="w-[31%] px-2 py-2 font-semibold">Product Name</th>
-                <th className="w-[11%] px-2 py-2 font-semibold">SKU</th>
-                <th className="w-[13%] px-2 py-2 font-semibold">ASIN / UPC</th>
-                <th className="w-[11%] px-2 py-2 font-semibold">FNSKU</th>
-                <th className="w-[9%] px-2 py-2 font-semibold">Status</th>
+                <th className={isAdmin ? "w-[22%] px-2 py-2 font-semibold" : "w-[31%] px-2 py-2 font-semibold"}>Product Name</th>
+                {isAdmin ? <th className="w-[15%] px-2 py-2 font-semibold">Client</th> : null}
+                <th className="w-[10%] px-2 py-2 font-semibold">SKU</th>
+                <th className="w-[12%] px-2 py-2 font-semibold">ASIN / UPC</th>
+                <th className="w-[10%] px-2 py-2 font-semibold">FNSKU</th>
+                <th className="w-[8%] px-2 py-2 font-semibold">Status</th>
                 <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th>
                 <th className="w-[8%] px-2 py-2 text-right font-semibold">Actions</th>
               </tr>
@@ -311,13 +359,13 @@ export function ProductsClient() {
                   </td>
                   <td className="px-2 py-2.5">
                     <p className="line-clamp-2 text-sm font-medium leading-5 text-slate-950">{product.product_name}</p>
-                    {isAdmin ? <p className="mt-0.5 truncate text-xs text-slate-500">{product.clients?.company_name ?? "Unknown client"}</p> : null}
                   </td>
+                  {isAdmin ? <td className="px-2 py-2.5 text-xs text-slate-600">{product.clients?.company_name ?? "Unknown client"}</td> : null}
                   <td className="px-2 py-2.5 text-xs text-slate-600">{product.sku ?? "-"}</td>
                   <td className="px-2 py-2.5 text-xs text-slate-600">{formatAsinUpc(product)}</td>
                   <td className="px-2 py-2.5 text-xs text-slate-600">{product.fnsku ?? "-"}</td>
                   <td className="px-2 py-2.5">
-                    <StatusBadge tone={product.active ? "emerald" : "slate"}>{product.active ? "Active" : "Archived"}</StatusBadge>
+                    <StatusBadge tone={product.deleted_at ? "rose" : product.active ? "emerald" : "slate"}>{product.deleted_at ? "Deleted" : product.active ? "Active" : "Archived"}</StatusBadge>
                   </td>
                   <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td>
                   <td className="px-2 py-2.5">
@@ -330,9 +378,9 @@ export function ProductsClient() {
                         <PencilIcon />
                       </TableActionLink>
                       <TableActionButton
-                        title={product.active && !historyProductIds.has(product.id) ? "Delete product" : product.active ? "Archive product" : "Restore product"}
-                        aria-label={product.active && !historyProductIds.has(product.id) ? `Delete ${product.product_name}` : product.active ? `Archive ${product.product_name}` : `Restore ${product.product_name}`}
-                        tone={product.active && !historyProductIds.has(product.id) ? "danger" : "neutral"}
+                        title={getProductActionLabel(product, historyProductIds)}
+                        aria-label={`${getProductActionLabel(product, historyProductIds)} ${product.product_name}`}
+                        tone={product.active && !product.deleted_at && !historyProductIds.has(product.id) ? "danger" : "neutral"}
                         onClick={() => void handleArchiveDelete(product)}
                       >
                         {product.active && !historyProductIds.has(product.id) ? <TrashIcon /> : <ArchiveIcon />}
@@ -408,11 +456,39 @@ function SuccessBanner({ message }: { message: string | null }) {
   );
 }
 
-function compareProductsForDisplay(left: Product, right: Product) {
+function compareProductsForDisplay(left: Product, right: Product, sortFilter: SortFilter) {
+  if (sortFilter === "client") {
+    const clientDifference = (left.clients?.company_name ?? "").localeCompare(right.clients?.company_name ?? "");
+    if (clientDifference !== 0) return clientDifference;
+  }
+
+  if (sortFilter === "product") {
+    return left.product_name.localeCompare(right.product_name);
+  }
+
+  if (sortFilter === "updated") {
+    return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+  }
+
+  if (sortFilter === "status") {
+    const statusDifference = getProductStatusLabel(left).localeCompare(getProductStatusLabel(right));
+    if (statusDifference !== 0) return statusDifference;
+  }
+
   const orderDifference = (left.sort_order ?? 0) - (right.sort_order ?? 0);
   if (orderDifference !== 0) return orderDifference;
 
   return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+}
+
+function getProductStatusLabel(product: Product) {
+  if (product.deleted_at) return "Deleted";
+  return product.active ? "Active" : "Archived";
+}
+
+function getProductActionLabel(product: Product, historyProductIds: Set<string>) {
+  if (product.deleted_at || !product.active) return "Restore product";
+  return historyProductIds.has(product.id) ? "Archive product" : "Delete product";
 }
 
 function isWithinDateFilter(value: string, filter: DateFilter) {

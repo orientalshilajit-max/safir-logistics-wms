@@ -103,6 +103,10 @@ export function InventoryClient() {
         .sort((a, b) => a.name.localeCompare(b.name)),
     [rows],
   );
+  const unresolvedProductRows = useMemo(
+    () => rows.filter((row) => !row.products),
+    [rows],
+  );
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -288,6 +292,11 @@ export function InventoryClient() {
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
+      {isAdmin && unresolvedProductRows.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          {unresolvedProductRows.length} inventory row{unresolvedProductRows.length === 1 ? "" : "s"} could not resolve a product catalog record. Inventory data was not changed.
+        </div>
+      ) : null}
 
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Inventory</h2>
