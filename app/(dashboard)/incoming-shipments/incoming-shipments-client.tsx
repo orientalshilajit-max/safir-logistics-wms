@@ -14,7 +14,7 @@ import {
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
-import { PencilIcon, TableActionLink, ViewIcon } from "@/app/components/table-actions";
+import { ArchiveIcon, PencilIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
@@ -50,6 +50,7 @@ const statusTabs = [
   { label: "Arrived / Receiving", value: "Arrived at Prep" },
   { label: "Received", value: "Received" },
   { label: "Issue", value: "Issue" },
+  { label: "Archived", value: "archived" },
 ];
 
 export function IncomingShipmentsClient({
@@ -62,6 +63,7 @@ export function IncomingShipmentsClient({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState(() => normalizeStatusFilter(initialStatus));
   const [dateFilter, setDateFilter] = useState("all");
+  const [actionShipmentId, setActionShipmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isClientPortal = role === "client";
@@ -103,10 +105,11 @@ export function IncomingShipmentsClient({
 
     return shipments.filter((shipment) => {
       const statusName = getDisplayStatus(shipment);
+      const isArchived = Boolean(shipment.archived_at);
       const matchesStatus =
-        statusFilter === "all"
-          ? true
-          : statusName === statusFilter;
+        statusFilter === "archived"
+          ? isArchived
+          : !isArchived && (statusFilter === "all" ? true : statusName === statusFilter);
       const matchesQuery =
         !normalized ||
         shipment.clients?.company_name.toLowerCase().includes(normalized) ||
@@ -130,6 +133,8 @@ export function IncomingShipmentsClient({
   const shipmentStats = useMemo(() => {
     return shipments.reduce(
       (totals, shipment) => {
+        if (shipment.archived_at) return totals;
+
         const status = getDisplayStatus(shipment);
         totals.total += 1;
         if (status === "In Transit") totals.inTransit += 1;
@@ -142,6 +147,61 @@ export function IncomingShipmentsClient({
     );
   }, [shipments]);
   const adminShipmentStats = shipmentStats;
+
+  async function handleDeleteOrArchiveShipment(shipment: Shipment) {
+    if (actionShipmentId) return;
+
+    const statusName = getDisplayStatus(shipment);
+    const hasWarehouseActivity = hasShipmentWarehouseActivity(shipment);
+    const canDelete = ["Draft", "Submitted", "In Transit"].includes(shipment.statuses?.name ?? statusName) && !hasWarehouseActivity;
+
+    if (canDelete) {
+      const confirmed = window.confirm("Delete this shipment?");
+      if (!confirmed) return;
+
+      setActionShipmentId(shipment.id);
+      setError(null);
+
+      const { error: deleteError } = await supabase.rpc("delete_incoming_shipment_if_allowed", {
+        p_shipment_id: shipment.id,
+      });
+
+      if (deleteError) {
+        setError(deleteError.message);
+      } else {
+        setShipments((current) => current.filter((currentShipment) => currentShipment.id !== shipment.id));
+      }
+
+      setActionShipmentId(null);
+      return;
+    }
+
+    window.alert("This shipment already has warehouse activity and cannot be deleted. You can archive it instead.");
+    const confirmed = window.confirm("Archive this shipment?");
+    if (!confirmed) return;
+
+    setActionShipmentId(shipment.id);
+    setError(null);
+
+    const archivedAt = new Date().toISOString();
+    const { error: archiveError } = await supabase.rpc("archive_incoming_shipment", {
+      p_shipment_id: shipment.id,
+    });
+
+    if (archiveError) {
+      setError(archiveError.message);
+    } else {
+      setShipments((current) =>
+        current.map((currentShipment) =>
+          currentShipment.id === shipment.id
+            ? { ...currentShipment, archived_at: archivedAt }
+            : currentShipment,
+        ),
+      );
+    }
+
+    setActionShipmentId(null);
+  }
 
   if (isClientPortal) {
     return (
@@ -208,6 +268,8 @@ export function IncomingShipmentsClient({
                 <ClientShipmentsTable
                   shipments={filteredShipments}
                   showClient={false}
+                  actionShipmentId={actionShipmentId}
+                  onDeleteOrArchive={handleDeleteOrArchiveShipment}
                 />
               </div>
             </div>
@@ -285,6 +347,8 @@ export function IncomingShipmentsClient({
             <ClientShipmentsTable
               shipments={filteredShipments}
               showClient
+              actionShipmentId={actionShipmentId}
+              onDeleteOrArchive={handleDeleteOrArchiveShipment}
             />
           </div>
         )}
@@ -346,14 +410,18 @@ function ClientStat({
 }
 
 function ClientShipmentsTable({
+  actionShipmentId,
+  onDeleteOrArchive,
   shipments,
   showClient,
 }: {
+  actionShipmentId: string | null;
+  onDeleteOrArchive: (shipment: Shipment) => void;
   shipments: Shipment[];
   showClient: boolean;
 }) {
   return (
-    <table className="w-full min-w-[1040px] table-fixed text-left text-sm tabular-nums">
+    <table className="w-full min-w-[940px] table-fixed text-left text-sm tabular-nums">
       <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-[0.68rem] font-medium text-slate-500 backdrop-blur">
         <tr>
           <th className="w-24 px-2.5 py-2.5 font-semibold">Shipment ID</th>
@@ -364,7 +432,6 @@ function ClientShipmentsTable({
           <th className="w-20 px-2 py-2.5 text-center font-semibold">Units</th>
           <th className="w-36 px-2.5 py-2.5 font-semibold">Tracking</th>
           <th className="w-28 px-2.5 py-2.5 font-semibold">Carrier</th>
-          <th className="w-24 px-2.5 py-2.5 font-semibold">ETA / Date</th>
           <th className="w-28 px-2.5 py-2.5 font-semibold">Status</th>
           <th className="w-20 px-2.5 py-2.5 text-right font-semibold">Actions</th>
         </tr>
@@ -391,19 +458,11 @@ function ClientShipmentsTable({
               <td className="whitespace-nowrap px-2 py-2.5 text-center text-slate-700">{summary.expectedUnits}</td>
               <td className="truncate px-2.5 py-2.5 text-slate-600">{shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "-"}</td>
               <td className="truncate px-2.5 py-2.5 text-slate-600">{shipment.carrier || "-"}</td>
-              <td className="px-2.5 py-2.5 text-slate-600">{shipment.expected_arrival_date ? formatCompactDate(shipment.expected_arrival_date) : "-"}</td>
               <td className="px-2.5 py-2.5">
                   <StatusBadge tone={statusTone(statusName)}>{statusName === "Arrived at Prep" ? "Receiving" : statusName}</StatusBadge>
               </td>
               <td className="px-2.5 py-2.5">
                 <div className="flex justify-end gap-0.5">
-                  <TableActionLink
-                    href={`/incoming-shipments/${shipment.id}`}
-                    aria-label={`View shipment ${shipment.id.slice(0, 8)}`}
-                    title="View"
-                  >
-                    <ViewIcon />
-                  </TableActionLink>
                   <TableActionLink
                     href={`/incoming-shipments/${shipment.id}/edit`}
                     aria-label={`Edit shipment ${shipment.id.slice(0, 8)}`}
@@ -411,6 +470,15 @@ function ClientShipmentsTable({
                   >
                     <PencilIcon />
                   </TableActionLink>
+                  <TableActionButton
+                    aria-label={`${hasShipmentWarehouseActivity(shipment) ? "Archive" : "Delete"} shipment ${shipment.id.slice(0, 8)}`}
+                    disabled={actionShipmentId === shipment.id}
+                    onClick={() => onDeleteOrArchive(shipment)}
+                    title={hasShipmentWarehouseActivity(shipment) ? "Archive Shipment" : "Delete Shipment"}
+                    tone={hasShipmentWarehouseActivity(shipment) ? "neutral" : "danger"}
+                  >
+                    {hasShipmentWarehouseActivity(shipment) ? <ArchiveIcon /> : <TrashIcon />}
+                  </TableActionButton>
                 </div>
               </td>
             </tr>
@@ -418,6 +486,19 @@ function ClientShipmentsTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+function hasShipmentWarehouseActivity(shipment: Shipment) {
+  const statusName = getDisplayStatus(shipment);
+  const rawStatusName = shipment.statuses?.name ?? statusName;
+
+  return (
+    Boolean(shipment.archived_at) ||
+    ["Arrived at Prep", "Receiving", "Received", "Completed", "Issue", "Posted to Inventory"].includes(rawStatusName) ||
+    ["Arrived at Prep", "Received", "Issue"].includes(statusName) ||
+    shipment.incoming_items.some((item) => Boolean(item.inventory_posted_at)) ||
+    shipment.incoming_tracking_boxes.some((box) => Boolean(box.inventory_posted_at))
   );
 }
 
@@ -445,11 +526,12 @@ export function getDisplayStatus(shipment: Shipment) {
     return "Issue";
   }
 
-  if (statusName === "Received") {
-    return statusName;
+  if (statusName === "Received" || statusName === "Completed") {
+    return "Received";
   }
 
   if (
+    statusName === "Receiving" ||
     statusName === "Arrived at Prep" ||
     statusName === "Pending Receiving" ||
     statusName === "Partially Received" ||
@@ -467,6 +549,7 @@ function normalizeStatusFilter(value?: string) {
   if (value === "received") return "Received";
   if (value === "in_transit") return "In Transit";
   if (value === "discrepancy_issue" || value === "issue") return "Issue";
+  if (value === "archived") return "archived";
   return "all";
 }
 

@@ -458,6 +458,7 @@ export type Database = {
       };
       incoming_shipments: {
         Row: {
+          archived_at: string | null;
           carrier: string;
           client_id: string;
           created_at: string;
@@ -474,6 +475,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          archived_at?: string | null;
           carrier: string;
           client_id: string;
           created_at?: string;
@@ -490,6 +492,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          archived_at?: string | null;
           carrier?: string;
           client_id?: string;
           created_at?: string;
@@ -1711,6 +1714,27 @@ export type Database = {
           p_quantity: number;
           p_reason: string;
           p_notes?: string | null;
+        };
+        Returns: undefined;
+      };
+      archive_incoming_shipment: {
+        Args: { p_shipment_id: string };
+        Returns: undefined;
+      };
+      delete_incoming_shipment_if_allowed: {
+        Args: { p_shipment_id: string };
+        Returns: undefined;
+      };
+      incoming_shipment_has_warehouse_activity: {
+        Args: { p_shipment_id: string };
+        Returns: boolean;
+      };
+      update_incoming_shipment_client_limited: {
+        Args: {
+          p_shipment_id: string;
+          p_carrier: string;
+          p_tracking_rows: Json;
+          p_item_notes: Json;
         };
         Returns: undefined;
       };
