@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
-import type { Tables, TablesInsert } from "@/app/types/database.types";
+import type { Tables } from "@/app/types/database.types";
 import {
   Button,
   ErrorBanner,
@@ -39,7 +39,6 @@ type ShipmentLine = {
   product_id: string;
   new_product_name: string;
   expected_quantity: string;
-  expected_boxes: string;
   notes: string;
 };
 type TrackingLine = {
@@ -60,7 +59,6 @@ const emptyLine: ShipmentLine = {
   product_id: "",
   new_product_name: "",
   expected_quantity: "1",
-  expected_boxes: "",
   notes: "",
 };
 
@@ -92,6 +90,7 @@ const defaultCarrierNames = [
   "Local Delivery",
   "Other",
 ];
+const createNewProductValue = "__create_new_product__";
 
 export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string }) {
   const router = useRouter();
@@ -105,6 +104,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const [shipmentStatusName, setShipmentStatusName] = useState("In Transit");
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
   const [hasPostedItems, setHasPostedItems] = useState(false);
+  const [creatingProductRows, setCreatingProductRows] = useState<Record<number, boolean>>({});
+  const [creatingProductIndex, setCreatingProductIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,7 +225,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             product_id: item.product_id,
             new_product_name: "",
             expected_quantity: String(item.expected_quantity),
-            expected_boxes: String(item.expected_boxes),
             notes: item.notes ?? "",
           }))
           : [emptyLine],
@@ -269,6 +269,63 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }));
   }
 
+  async function createInlineProduct(index: number) {
+    const line = form.lines[index];
+
+    if (!line || creatingProductIndex !== null) return;
+
+    if (!form.client_id) {
+      setError("Select a client before creating a product.");
+      return;
+    }
+
+    if (!line.new_product_name.trim()) {
+      setError("Enter a product name.");
+      return;
+    }
+
+    setCreatingProductIndex(index);
+    setError(null);
+
+    const { data: lastProduct } = await supabase
+      .from("products")
+      .select("sort_order")
+      .eq("client_id", form.client_id)
+      .is("deleted_at", null)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const { data: product, error: productError } = await supabase
+      .from("products")
+      .insert({
+        active: true,
+        client_id: form.client_id,
+        product_name: line.new_product_name.trim(),
+        sort_order: (lastProduct?.sort_order ?? 0) + 1,
+      })
+      .select("id, client_id, product_name, sku")
+      .single();
+
+    if (productError || !product) {
+      setError(productError?.message ?? "Unable to create product.");
+      setCreatingProductIndex(null);
+      return;
+    }
+
+    setProducts((current) => [...current, product].sort((first, second) => first.product_name.localeCompare(second.product_name)));
+    setCreatingProductRows((current) => {
+      const next = { ...current };
+      delete next[index];
+      return next;
+    });
+    updateLine(index, {
+      ...line,
+      product_id: product.id,
+      new_product_name: "",
+    });
+    setCreatingProductIndex(null);
+  }
+
   function updateTrackingLine(index: number, line: TrackingLine) {
     setForm((current) => ({
       ...current,
@@ -307,7 +364,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
 
     for (const line of preparedLines) {
       const expectedQuantity = Number(line.expected_quantity);
-      const expectedBoxes = line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes);
 
       if (!Number.isInteger(expectedQuantity) || expectedQuantity < 1) {
         setError("Unit quantities must be whole numbers greater than zero.");
@@ -315,8 +371,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         return;
       }
 
-      if (!Number.isInteger(expectedBoxes) || expectedBoxes < 0) {
-        setError("Box quantities must be whole numbers zero or greater.");
+      if (!line.product_id) {
+        setError("Create or select each product before saving the shipment.");
         setSaving(false);
         return;
       }
@@ -333,47 +389,10 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       }
     }
 
-    const lineProductIds: string[] = [];
-
-    for (const line of preparedLines) {
-      if (line.product_id) {
-        lineProductIds.push(line.product_id);
-        continue;
-      }
-
-      const { data: lastProduct } = await supabase
-        .from("products")
-        .select("sort_order")
-        .eq("client_id", form.client_id)
-        .is("deleted_at", null)
-        .order("sort_order", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const productPayload: TablesInsert<"products"> = {
-        client_id: form.client_id,
-        product_name: line.new_product_name.trim(),
-        active: true,
-        sort_order: (lastProduct?.sort_order ?? 0) + 1,
-      };
-      const { data: product, error: productError } = await supabase
-        .from("products")
-        .insert(productPayload)
-        .select("id")
-        .single();
-
-      if (productError || !product) {
-        setError(productError?.message ?? "Unable to create product.");
-        setSaving(false);
-        return;
-      }
-
-      lineProductIds.push(product.id);
-    }
-
     const trackingNumbers = form.trackingLines
       .map((line) => line.tracking_number.trim())
       .filter(Boolean);
-    const totalBoxes = preparedLines.reduce((sum, line) => sum + (line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes)), 0);
+    const totalBoxes = form.trackingLines.reduce((sum, line) => sum + (line.box_count.trim() === "" ? 0 : Number(line.box_count)), 0);
     const masterTracking = trackingNumbers[0] ?? "";
     const shipmentPayload = {
       client_id: form.client_id,
@@ -414,11 +433,11 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       }
 
       const { error: itemsError } = await supabase.from("incoming_items").insert(
-        preparedLines.map((line, index) => ({
+        preparedLines.map((line) => ({
           shipment_id: activeShipmentId,
-          product_id: lineProductIds[index],
+          product_id: line.product_id,
           expected_quantity: Number(line.expected_quantity),
-          expected_boxes: line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes),
+          expected_boxes: 0,
           notes: line.notes.trim() || null,
         })),
       );
@@ -518,57 +537,80 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           )}
 
           <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-950">Products</h3>
-              </div>
-              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || !canEditProductLines}>
-                + Add Another Product
-              </Button>
-            </div>
+            <h3 className="text-sm font-semibold text-slate-950">Products</h3>
             {form.lines.map((line, index) => (
-              <div key={index} className="grid gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_minmax(0,1fr)_auto]">
-                <Field label="Product">
-                  <select className={inputClassName} disabled={!canEditProductLines} value={line.product_id} onChange={(event) => updateLine(index, { ...line, product_id: event.target.value, new_product_name: "" })}>
-                    <option value="">Select product</option>
-                    {availableProducts.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.product_name}{product.sku ? ` (${product.sku})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="+ Create new product">
-                  <input className={inputClassName} placeholder="Product name" disabled={!canEditProductLines || Boolean(line.product_id)} value={line.new_product_name} onChange={(event) => updateLine(index, { ...line, new_product_name: event.target.value })} />
-                </Field>
-                <Field label="Units">
-                  <input className={inputClassName} min="1" required disabled={!canEditProductLines} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
-                </Field>
-                <Field label="Boxes">
-                  <input className={inputClassName} min="0" disabled={!canEditProductLines} type="number" value={line.expected_boxes} onChange={(event) => updateLine(index, { ...line, expected_boxes: event.target.value })} />
-                </Field>
-                <Field label="Notes">
-                  <input className={inputClassName} disabled={!canEditProductLines} value={line.notes} onChange={(event) => updateLine(index, { ...line, notes: event.target.value })} />
-                </Field>
-                {form.lines.length > 1 && canEditProductLines ? (
-                  <div className="flex items-end">
-                    <Button type="button" variant="danger" onClick={() => setForm({ ...form, lines: form.lines.filter((_, currentIndex) => currentIndex !== index) })}>
-                      Remove
+              <div key={index} className="space-y-3 rounded-md border border-slate-100 bg-slate-50 p-3">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_7rem_minmax(0,1fr)_auto]">
+                  <Field label="Product">
+                    <select
+                      className={inputClassName}
+                      disabled={!canEditProductLines}
+                      value={creatingProductRows[index] ? createNewProductValue : line.product_id}
+                      onChange={(event) => {
+                        const value = event.target.value;
+
+                        if (value === createNewProductValue) {
+                          setCreatingProductRows((current) => ({ ...current, [index]: true }));
+                          updateLine(index, { ...line, product_id: "", new_product_name: "" });
+                          return;
+                        }
+
+                        setCreatingProductRows((current) => {
+                          const next = { ...current };
+                          delete next[index];
+                          return next;
+                        });
+                        updateLine(index, { ...line, product_id: value, new_product_name: "" });
+                      }}
+                    >
+                      <option value="">Select product</option>
+                      <option value={createNewProductValue}>+ Create new product</option>
+                      {availableProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.product_name}{product.sku ? ` (${product.sku})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Units">
+                    <input className={inputClassName} min="1" required disabled={!canEditProductLines} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
+                  </Field>
+                  <Field label="Notes">
+                    <input className={inputClassName} disabled={!canEditProductLines} value={line.notes} onChange={(event) => updateLine(index, { ...line, notes: event.target.value })} />
+                  </Field>
+                  {form.lines.length > 1 && canEditProductLines ? (
+                    <div className="flex items-end">
+                      <Button type="button" variant="danger" onClick={() => setForm({ ...form, lines: form.lines.filter((_, currentIndex) => currentIndex !== index) })}>
+                        Remove
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                {creatingProductRows[index] ? (
+                  <div className="grid gap-2 rounded-md border border-blue-100 bg-blue-50 p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      className={inputClassName}
+                      placeholder="New product name"
+                      value={line.new_product_name}
+                      onChange={(event) => updateLine(index, { ...line, new_product_name: event.target.value })}
+                    />
+                    <Button type="button" disabled={creatingProductIndex === index || !line.new_product_name.trim()} onClick={() => void createInlineProduct(index)}>
+                      {creatingProductIndex === index ? "Creating..." : "Create product"}
                     </Button>
                   </div>
                 ) : null}
               </div>
             ))}
+            <div className="pt-1">
+              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || !canEditProductLines}>
+                + Add Another Product
+              </Button>
+            </div>
           </section>
 
           <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-sm font-semibold text-slate-950">Shipping Information</h3>
-              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, trackingLines: [...form.trackingLines, emptyTrackingLine] })}>
-                + Add Another Tracking Number
-              </Button>
-            </div>
-            <div className="grid gap-3 lg:grid-cols-[14rem_minmax(0,1fr)]">
+            <h3 className="text-sm font-semibold text-slate-950">Shipping Information</h3>
+            <div className="max-w-sm">
               <Field label="Carrier optional">
                 <select className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })}>
                   <option value="">Select carrier</option>
@@ -578,9 +620,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                     </option>
                   ))}
                 </select>
-              </Field>
-              <Field label="Notes optional">
-                <input className={inputClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
               </Field>
             </div>
             {form.trackingLines.map((line, index) => (
@@ -603,6 +642,11 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                 ) : null}
               </div>
             ))}
+            <div className="pt-1">
+              <Button type="button" variant="secondary" onClick={() => setForm({ ...form, trackingLines: [...form.trackingLines, emptyTrackingLine] })}>
+                + Add Another Tracking Number
+              </Button>
+            </div>
           </section>
 
           <div className="flex gap-2">
