@@ -123,8 +123,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const canEditProductLines = canFullyEditShipment;
   const canEditTrackingLines = canFullyEditShipment || (isClientPortal && limitedClientEditStatusNames.includes(shipmentStatusName));
   const visibleStatuses = useMemo(
-    () => statuses.filter((status) => intakeStatusNames.includes(status.name) || status.id === form.status_id),
-    [form.status_id, statuses],
+    () => isAdmin ? statuses : statuses.filter((status) => intakeStatusNames.includes(status.name) || status.id === form.status_id),
+    [form.status_id, isAdmin, statuses],
   );
   const visibleCarrierOptions = useMemo(() => {
     const options = carrierOptions.length > 0
@@ -173,7 +173,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         .from("incoming_shipments")
         .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, notes, status)")
         .eq("id", shipmentId)
-        .is("deleted_at", null)
         .single()
       : Promise.resolve({ data: null, error: null });
 

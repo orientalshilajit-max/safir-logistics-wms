@@ -14,7 +14,7 @@ import {
 import { useAuth } from "@/app/auth/auth-provider";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
-import { ArchiveIcon, PencilIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
+import { ArchiveIcon, PencilIcon, RestoreIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
@@ -50,7 +50,11 @@ const statusTabs = [
   { label: "Arrived / Receiving", value: "Arrived at Prep" },
   { label: "Received", value: "Received" },
   { label: "Issue", value: "Issue" },
+];
+const lifecycleTabs = [
+  { label: "Active", value: "active" },
   { label: "Archived", value: "archived" },
+  { label: "Deleted", value: "deleted" },
 ];
 
 export function IncomingShipmentsClient({
@@ -62,11 +66,14 @@ export function IncomingShipmentsClient({
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState(() => normalizeStatusFilter(initialStatus));
+  const [lifecycleFilter, setLifecycleFilter] = useState<"active" | "archived" | "deleted">("active");
   const [dateFilter, setDateFilter] = useState("all");
   const [actionShipmentId, setActionShipmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const isClientPortal = role === "client";
+  const isAdmin = role === "admin" || role === "warehouse_operator";
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -75,11 +82,14 @@ export function IncomingShipmentsClient({
     const shipmentsQuery = supabase
       .from("incoming_shipments")
       .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id, expected_quantity, expected_boxes, received_quantity, received_boxes, damaged_quantity, missing_quantity, is_unexpected, inventory_posted_at, notes, products(product_name, sku, asin, barcode)), incoming_tracking_boxes(id, tracking_number, status, inventory_posted_at, box_count, notes, carrier)")
-      .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
     if (isClientPortal && clientId) {
       shipmentsQuery.eq("client_id", clientId);
+    }
+
+    if (isClientPortal) {
+      shipmentsQuery.is("deleted_at", null).is("archived_at", null);
     }
 
     const { data, error: shipmentsError } = await shipmentsQuery;
@@ -106,6 +116,14 @@ export function IncomingShipmentsClient({
     return shipments.filter((shipment) => {
       const statusName = getDisplayStatus(shipment);
       const isArchived = Boolean(shipment.archived_at);
+      const isDeleted = Boolean(shipment.deleted_at);
+      const matchesLifecycle = isClientPortal
+        ? !isArchived && !isDeleted
+        : lifecycleFilter === "deleted"
+          ? isDeleted
+          : lifecycleFilter === "archived"
+            ? isArchived && !isDeleted
+            : !isArchived && !isDeleted;
       const matchesStatus =
         statusFilter === "archived"
           ? isArchived
@@ -126,9 +144,9 @@ export function IncomingShipmentsClient({
         );
       const matchesDate = dateFilter === "all" || isWithinDateFilter(shipment.created_at, dateFilter);
 
-      return matchesStatus && matchesQuery && matchesDate;
+      return matchesLifecycle && matchesStatus && matchesQuery && matchesDate;
     });
-  }, [dateFilter, query, shipments, statusFilter]);
+  }, [dateFilter, isClientPortal, lifecycleFilter, query, shipments, statusFilter]);
 
   const shipmentStats = useMemo(() => {
     return shipments.reduce(
@@ -154,7 +172,9 @@ export function IncomingShipmentsClient({
     const canDelete = ["Draft", "Submitted", "In Transit"].includes(shipment.statuses?.name ?? statusName) && !hasWarehouseActivity;
 
     if (canDelete) {
-      const confirmed = window.confirm("Delete this shipment?");
+      const confirmed = window.confirm(
+        "Delete shipment?\n\nThis shipment will be permanently deleted if it has no warehouse activity. This action cannot be undone.",
+      );
       if (!confirmed) return;
 
       setActionShipmentId(shipment.id);
@@ -166,26 +186,45 @@ export function IncomingShipmentsClient({
 
       if (deleteError) {
         if (deleteError.message.includes("Could not find the function")) {
+          const timestamp = new Date().toISOString();
           const { error: directDeleteError } = await supabase
             .from("incoming_shipments")
-            .update({ deleted_at: new Date().toISOString() })
+            .update({ deleted_at: timestamp })
             .eq("id", shipment.id);
 
           if (directDeleteError) {
             setError(directDeleteError.message);
           } else {
-            setShipments((current) => current.filter((currentShipment) => currentShipment.id !== shipment.id));
+            setShipments((current) =>
+              current.map((currentShipment) =>
+                currentShipment.id === shipment.id
+                  ? { ...currentShipment, deleted_at: timestamp }
+                  : currentShipment,
+              ),
+            );
           }
         } else {
           setError(deleteError.message);
         }
       } else {
-        setShipments((current) => current.filter((currentShipment) => currentShipment.id !== shipment.id));
+        const timestamp = new Date().toISOString();
+        setShipments((current) =>
+          current.map((currentShipment) =>
+            currentShipment.id === shipment.id
+              ? { ...currentShipment, deleted_at: timestamp }
+              : currentShipment,
+          ),
+        );
       }
 
       setActionShipmentId(null);
       return;
     }
+
+    const archiveConfirmed = window.confirm(
+      "Delete shipment?\n\nThis shipment already has warehouse activity and cannot be permanently deleted. It will be archived instead.",
+    );
+    if (!archiveConfirmed) return;
 
     setActionShipmentId(shipment.id);
     setError(null);
@@ -205,7 +244,7 @@ export function IncomingShipmentsClient({
         if (directArchiveError) {
           setError(directArchiveError.message);
         } else {
-          setError("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
+          setMessage("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
           setShipments((current) =>
             current.map((currentShipment) =>
               currentShipment.id === shipment.id
@@ -218,7 +257,7 @@ export function IncomingShipmentsClient({
         setError(archiveError.message);
       }
     } else {
-      setError("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
+      setMessage("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
       setShipments((current) =>
         current.map((currentShipment) =>
           currentShipment.id === shipment.id
@@ -231,10 +270,65 @@ export function IncomingShipmentsClient({
     setActionShipmentId(null);
   }
 
+  async function handleRestoreShipment(shipment: Shipment) {
+    if (actionShipmentId || !isAdmin) return;
+
+    const confirmed = window.confirm("Restore this shipment to Active?");
+    if (!confirmed) return;
+
+    setActionShipmentId(shipment.id);
+    setError(null);
+    setMessage(null);
+
+    const { error: restoreError } = await supabase.rpc("restore_incoming_shipment", {
+      p_shipment_id: shipment.id,
+    });
+
+    if (restoreError) {
+      if (restoreError.message.includes("Could not find the function")) {
+        const { error: directRestoreError } = await supabase
+          .from("incoming_shipments")
+          .update({
+            archived_at: null,
+            deleted_at: null,
+            restored_at: new Date().toISOString(),
+          })
+          .eq("id", shipment.id);
+
+        if (directRestoreError) {
+          setError(directRestoreError.message);
+        } else {
+          setMessage("Shipment restored.");
+          setShipments((current) =>
+            current.map((currentShipment) =>
+              currentShipment.id === shipment.id
+                ? { ...currentShipment, archived_at: null, deleted_at: null, restored_at: new Date().toISOString() }
+                : currentShipment,
+            ),
+          );
+        }
+      } else {
+        setError(restoreError.message);
+      }
+    } else {
+      setMessage("Shipment restored.");
+      setShipments((current) =>
+        current.map((currentShipment) =>
+          currentShipment.id === shipment.id
+            ? { ...currentShipment, archived_at: null, deleted_at: null, restored_at: new Date().toISOString() }
+            : currentShipment,
+        ),
+      );
+    }
+
+    setActionShipmentId(null);
+  }
+
   if (isClientPortal) {
     return (
       <div className="space-y-5">
         <ErrorBanner message={error} />
+        {message ? <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">{message}</div> : null}
 
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Incoming Shipments</h2>
@@ -295,7 +389,10 @@ export function IncomingShipmentsClient({
                   shipments={filteredShipments}
                   showClient={false}
                   actionShipmentId={actionShipmentId}
+                  lifecycleFilter="active"
+                  onRestore={handleRestoreShipment}
                   onDeleteOrArchive={handleDeleteOrArchiveShipment}
+                  isAdmin={false}
                 />
               </div>
             </div>
@@ -308,6 +405,7 @@ export function IncomingShipmentsClient({
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
+      {message ? <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">{message}</div> : null}
 
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Incoming Shipments</h2>
@@ -328,6 +426,20 @@ export function IncomingShipmentsClient({
 
       <Panel title="Incoming shipments">
         <div className="mb-4 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {lifecycleTabs.map((tab) => (
+              <QuickFilterButton
+                key={tab.value}
+                active={lifecycleFilter === tab.value}
+                onClick={() => {
+                  setLifecycleFilter(tab.value as typeof lifecycleFilter);
+                  setStatusFilter("all");
+                }}
+              >
+                {tab.label}
+              </QuickFilterButton>
+            ))}
+          </div>
           <div className="flex flex-wrap gap-2">
             {statusTabs.map((tab) => (
               <QuickFilterButton
@@ -372,7 +484,10 @@ export function IncomingShipmentsClient({
               shipments={filteredShipments}
               showClient
               actionShipmentId={actionShipmentId}
+              lifecycleFilter={lifecycleFilter}
+              onRestore={handleRestoreShipment}
               onDeleteOrArchive={handleDeleteOrArchiveShipment}
+              isAdmin={isAdmin}
             />
           </div>
         )}
@@ -440,12 +555,18 @@ function ClientStat({
 
 function ClientShipmentsTable({
   actionShipmentId,
+  isAdmin,
+  lifecycleFilter,
   onDeleteOrArchive,
+  onRestore,
   shipments,
   showClient,
 }: {
   actionShipmentId: string | null;
+  isAdmin: boolean;
+  lifecycleFilter: "active" | "archived" | "deleted";
   onDeleteOrArchive: (shipment: Shipment) => void;
+  onRestore: (shipment: Shipment) => void;
   shipments: Shipment[];
   showClient: boolean;
 }) {
@@ -492,22 +613,36 @@ function ClientShipmentsTable({
               </td>
               <td className="px-2.5 py-2.5">
                 <div className="flex justify-end gap-0.5">
-                  <TableActionLink
-                    href={`/incoming-shipments/${shipment.id}/edit`}
-                    aria-label={`Edit shipment ${shipment.id.slice(0, 8)}`}
-                    title="Edit"
-                  >
-                    <PencilIcon />
-                  </TableActionLink>
-                  <TableActionButton
-                    aria-label={`${hasShipmentWarehouseActivity(shipment) ? "Archive" : "Delete"} shipment ${shipment.id.slice(0, 8)}`}
-                    disabled={actionShipmentId === shipment.id}
-                    onClick={() => onDeleteOrArchive(shipment)}
-                    title={hasShipmentWarehouseActivity(shipment) ? "Archive Shipment" : "Delete Shipment"}
-                    tone={hasShipmentWarehouseActivity(shipment) ? "neutral" : "danger"}
-                  >
-                    {hasShipmentWarehouseActivity(shipment) ? <ArchiveIcon /> : <TrashIcon />}
-                  </TableActionButton>
+                  {lifecycleFilter === "active" ? (
+                    <>
+                      <TableActionLink
+                        href={`/incoming-shipments/${shipment.id}/edit`}
+                        aria-label={`Edit shipment ${shipment.id.slice(0, 8)}`}
+                        title="Edit"
+                      >
+                        <PencilIcon />
+                      </TableActionLink>
+                      <TableActionButton
+                        aria-label={`${hasShipmentWarehouseActivity(shipment) ? "Archive" : "Delete"} shipment ${shipment.id.slice(0, 8)}`}
+                        disabled={actionShipmentId === shipment.id}
+                        onClick={() => onDeleteOrArchive(shipment)}
+                        title={hasShipmentWarehouseActivity(shipment) ? "Archive Shipment" : "Delete Shipment"}
+                        tone={hasShipmentWarehouseActivity(shipment) ? "neutral" : "danger"}
+                      >
+                        {hasShipmentWarehouseActivity(shipment) ? <ArchiveIcon /> : <TrashIcon />}
+                      </TableActionButton>
+                    </>
+                  ) : isAdmin ? (
+                    <TableActionButton
+                      aria-label={`Restore shipment ${shipment.id.slice(0, 8)}`}
+                      disabled={actionShipmentId === shipment.id}
+                      onClick={() => onRestore(shipment)}
+                      title="Restore Shipment"
+                      tone="primary"
+                    >
+                      <RestoreIcon />
+                    </TableActionButton>
+                  ) : null}
                 </div>
               </td>
             </tr>

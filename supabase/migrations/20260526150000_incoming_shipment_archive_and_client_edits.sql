@@ -1,7 +1,10 @@
 -- Archive incoming shipments without destroying receiving or inventory history.
 
 alter table public.incoming_shipments
-add column if not exists archived_at timestamptz;
+add column if not exists archived_at timestamptz,
+add column if not exists archived_by uuid references auth.users(id) on update cascade on delete set null,
+add column if not exists deleted_by uuid references auth.users(id) on update cascade on delete set null,
+add column if not exists restored_at timestamptz;
 
 create index if not exists incoming_shipments_active_client_status_idx
 on public.incoming_shipments (client_id, status_id, created_at desc)
@@ -85,7 +88,9 @@ begin
   end if;
 
   update public.incoming_shipments
-  set archived_at = now()
+  set
+    archived_at = now(),
+    archived_by = auth.uid()
   where id = p_shipment_id
     and deleted_at is null;
 end;
@@ -122,9 +127,35 @@ begin
   end if;
 
   update public.incoming_shipments
-  set deleted_at = now()
+  set
+    deleted_at = now(),
+    deleted_by = auth.uid()
   where id = p_shipment_id
     and deleted_at is null;
+end;
+$$;
+
+create or replace function public.restore_incoming_shipment(p_shipment_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_wms_admin() then
+    raise exception 'Only admins can restore incoming shipments';
+  end if;
+
+  update public.incoming_shipments
+  set
+    archived_at = null,
+    deleted_at = null,
+    restored_at = now()
+  where id = p_shipment_id;
+
+  if not found then
+    raise exception 'Incoming shipment not found';
+  end if;
 end;
 $$;
 
@@ -142,9 +173,9 @@ as $$
 declare
   shipment_client_id uuid;
   shipment_status text;
-  tracking_numbers text[];
-  first_tracking text;
-  total_boxes integer;
+  v_tracking_numbers text[];
+  v_first_tracking text;
+  v_total_boxes integer;
   row_record jsonb;
   item_record jsonb;
 begin
@@ -172,19 +203,19 @@ begin
     coalesce(array_agg(row_value ->> 'tracking_number') filter (where length(btrim(row_value ->> 'tracking_number')) > 0), '{}'::text[]),
     nullif(btrim((p_tracking_rows -> 0) ->> 'tracking_number'), ''),
     coalesce(sum(coalesce(nullif(row_value ->> 'box_count', '')::integer, 1)), 0)
-  into tracking_numbers, first_tracking, total_boxes
+  into v_tracking_numbers, v_first_tracking, v_total_boxes
   from jsonb_array_elements(coalesce(p_tracking_rows, '[]'::jsonb)) row_value
   where nullif(row_value ->> 'box_count', '') is null
     or nullif(row_value ->> 'box_count', '')::integer >= 1;
 
-  first_tracking := tracking_numbers[1];
+  v_first_tracking := v_tracking_numbers[1];
 
   update public.incoming_shipments
   set
     carrier = btrim(coalesce(p_carrier, '')),
-    master_tracking_number = first_tracking,
-    tracking_numbers = tracking_numbers,
-    number_of_boxes = total_boxes,
+    master_tracking_number = v_first_tracking,
+    tracking_numbers = v_tracking_numbers,
+    number_of_boxes = v_total_boxes,
     updated_at = now()
   where id = p_shipment_id;
 
@@ -228,4 +259,5 @@ $$;
 grant execute on function public.incoming_shipment_has_warehouse_activity(uuid) to authenticated;
 grant execute on function public.archive_incoming_shipment(uuid) to authenticated;
 grant execute on function public.delete_incoming_shipment_if_allowed(uuid) to authenticated;
+grant execute on function public.restore_incoming_shipment(uuid) to authenticated;
 grant execute on function public.update_incoming_shipment_client_limited(uuid, text, jsonb, jsonb) to authenticated;

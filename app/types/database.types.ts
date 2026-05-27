@@ -459,9 +459,11 @@ export type Database = {
       incoming_shipments: {
         Row: {
           archived_at: string | null;
+          archived_by: string | null;
           carrier: string;
           client_id: string;
           created_at: string;
+          deleted_by: string | null;
           deleted_at: string | null;
           expected_arrival_date: string | null;
           actual_received_boxes: number | null;
@@ -472,13 +474,16 @@ export type Database = {
           status_id: string;
           supplier: string | null;
           tracking_numbers: string[];
+          restored_at: string | null;
           updated_at: string;
         };
         Insert: {
           archived_at?: string | null;
+          archived_by?: string | null;
           carrier: string;
           client_id: string;
           created_at?: string;
+          deleted_by?: string | null;
           deleted_at?: string | null;
           expected_arrival_date?: string | null;
           actual_received_boxes?: number | null;
@@ -489,13 +494,16 @@ export type Database = {
           status_id: string;
           supplier?: string | null;
           tracking_numbers?: string[];
+          restored_at?: string | null;
           updated_at?: string;
         };
         Update: {
           archived_at?: string | null;
+          archived_by?: string | null;
           carrier?: string;
           client_id?: string;
           created_at?: string;
+          deleted_by?: string | null;
           deleted_at?: string | null;
           expected_arrival_date?: string | null;
           actual_received_boxes?: number | null;
@@ -506,6 +514,7 @@ export type Database = {
           status_id?: string;
           supplier?: string | null;
           tracking_numbers?: string[];
+          restored_at?: string | null;
           updated_at?: string;
         };
         Relationships: [
@@ -1728,6 +1737,10 @@ export type Database = {
       incoming_shipment_has_warehouse_activity: {
         Args: { p_shipment_id: string };
         Returns: boolean;
+      };
+      restore_incoming_shipment: {
+        Args: { p_shipment_id: string };
+        Returns: undefined;
       };
       update_incoming_shipment_client_limited: {
         Args: {
