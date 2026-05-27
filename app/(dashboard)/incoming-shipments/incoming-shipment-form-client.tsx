@@ -13,12 +13,12 @@ import {
   inputClassName,
   LoadingState,
   Panel,
-  textAreaClassName,
 } from "@/app/components/wms-ui";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Pick<Tables<"products">, "id" | "client_id" | "product_name" | "sku">;
 type Status = Pick<Tables<"statuses">, "id" | "name" | "color">;
+type CarrierOption = Pick<Tables<"carrier_options">, "id" | "name" | "sort_order">;
 type Shipment = Tables<"incoming_shipments"> & {
   incoming_items: Pick<
     Tables<"incoming_items">,
@@ -49,10 +49,7 @@ type TrackingLine = {
 };
 type ShipmentForm = {
   client_id: string;
-  supplier: string;
   carrier: string;
-  master_tracking_number: string;
-  expected_arrival_date: string;
   notes: string;
   status_id: string;
   lines: ShipmentLine[];
@@ -63,7 +60,7 @@ const emptyLine: ShipmentLine = {
   product_id: "",
   new_product_name: "",
   expected_quantity: "1",
-  expected_boxes: "1",
+  expected_boxes: "",
   notes: "",
 };
 
@@ -75,15 +72,26 @@ const emptyTrackingLine: TrackingLine = {
 
 const emptyForm: ShipmentForm = {
   client_id: "",
-  supplier: "",
   carrier: "",
-  master_tracking_number: "",
-  expected_arrival_date: "",
   notes: "",
   status_id: "",
   lines: [emptyLine],
   trackingLines: [emptyTrackingLine],
 };
+
+const intakeStatusNames = ["Draft", "Submitted", "In Transit", "Receiving", "Completed"];
+const defaultCarrierNames = [
+  "UPS",
+  "FedEx",
+  "DHL",
+  "USPS",
+  "OnTrac",
+  "Amazon Freight",
+  "Amazon Delivery",
+  "LTL Freight",
+  "Local Delivery",
+  "Other",
+];
 
 export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string }) {
   const router = useRouter();
@@ -93,6 +101,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [carrierOptions, setCarrierOptions] = useState<CarrierOption[]>([]);
   const [shipmentStatusName, setShipmentStatusName] = useState("In Transit");
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
   const [hasPostedItems, setHasPostedItems] = useState(false);
@@ -104,7 +113,22 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     () => products.filter((product) => product.client_id === form.client_id),
     [form.client_id, products],
   );
-  const canEditProductLines = isAdmin || !shipmentId || shipmentStatusName === "In Transit";
+  const canEditProductLines = isAdmin || !shipmentId || ["Draft", "Submitted", "In Transit"].includes(shipmentStatusName);
+  const visibleStatuses = useMemo(
+    () => statuses.filter((status) => intakeStatusNames.includes(status.name) || status.id === form.status_id),
+    [form.status_id, statuses],
+  );
+  const visibleCarrierOptions = useMemo(() => {
+    const options = carrierOptions.length > 0
+      ? carrierOptions
+      : defaultCarrierNames.map((name, index) => ({ id: name, name, sort_order: (index + 1) * 10 }));
+
+    if (form.carrier && !options.some((option) => option.name === form.carrier)) {
+      return [...options, { id: form.carrier, name: form.carrier, sort_order: options.length * 10 + 10 }];
+    }
+
+    return options;
+  }, [carrierOptions, form.carrier]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -129,6 +153,13 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       .eq("active", true)
       .is("deleted_at", null)
       .order("sort_order");
+    const carriersQuery = supabase
+      .from("carrier_options")
+      .select("id, name, sort_order")
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order("sort_order")
+      .order("name");
     const shipmentQuery = shipmentId
       ? supabase
         .from("incoming_shipments")
@@ -143,10 +174,11 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       productsQuery.eq("client_id", clientId);
     }
 
-    const [clientsResult, productsResult, statusesResult, shipmentResult] = await Promise.all([
+    const [clientsResult, productsResult, statusesResult, carriersResult, shipmentResult] = await Promise.all([
       clientsQuery,
       productsQuery,
       statusesQuery,
+      carriersQuery,
       shipmentQuery,
     ]);
 
@@ -160,18 +192,31 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     if (statusesResult.error) setError(statusesResult.error.message);
     else setStatuses(loadedStatuses);
 
+    if (carriersResult.error) setError(carriersResult.error.message);
+    else setCarrierOptions(carriersResult.data ?? []);
+
     if (shipmentResult.error) {
       setError(shipmentResult.error.message);
     } else if (shipmentResult.data) {
       const shipment = shipmentResult.data as Shipment;
       setHasPostedItems(shipment.incoming_items.some((item) => Boolean(item.inventory_posted_at)));
       setShipmentStatusName(shipment.statuses?.name ?? "In Transit");
+      const trackingLines = shipment.incoming_tracking_boxes.length > 0
+        ? shipment.incoming_tracking_boxes.map((box) => ({
+          tracking_number: box.tracking_number,
+          box_count: box.box_count === null ? "" : String(box.box_count),
+          notes: box.notes ?? "",
+        }))
+        : shipment.master_tracking_number || shipment.tracking_numbers[0]
+          ? [{
+              tracking_number: shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "",
+              box_count: shipment.actual_received_boxes === null ? "" : String(shipment.actual_received_boxes),
+              notes: "",
+            }]
+          : [emptyTrackingLine];
       setForm({
         client_id: shipment.client_id,
-        supplier: shipment.supplier ?? "",
         carrier: shipment.carrier ?? "",
-        master_tracking_number: shipment.master_tracking_number ?? shipment.tracking_numbers[0] ?? "",
-        expected_arrival_date: shipment.expected_arrival_date ?? "",
         notes: shipment.notes ?? "",
         status_id: shipment.status_id,
         lines: shipment.incoming_items.length > 0
@@ -183,13 +228,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             notes: item.notes ?? "",
           }))
           : [emptyLine],
-        trackingLines: shipment.incoming_tracking_boxes.length > 0
-          ? shipment.incoming_tracking_boxes.map((box) => ({
-            tracking_number: box.tracking_number,
-            box_count: box.box_count === null ? "" : String(box.box_count),
-            notes: box.notes ?? "",
-          }))
-          : [emptyTrackingLine],
+        trackingLines,
       });
     } else {
       const inTransitStatus = loadedStatuses.find((status) => status.name === "In Transit") ?? loadedStatuses[0];
@@ -252,7 +291,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       return;
     }
 
-    if (!isAdmin && shipmentId && shipmentStatusName !== "In Transit") {
+    if (!isAdmin && shipmentId && !["Draft", "Submitted", "In Transit"].includes(shipmentStatusName)) {
       setError("Shipment quantities can only be edited before the shipment arrives at prep.");
       setSaving(false);
       return;
@@ -268,10 +307,10 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
 
     for (const line of preparedLines) {
       const expectedQuantity = Number(line.expected_quantity);
-      const expectedBoxes = Number(line.expected_boxes);
+      const expectedBoxes = line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes);
 
-      if (!Number.isInteger(expectedQuantity) || expectedQuantity < 0) {
-        setError("Unit quantities must be whole numbers zero or greater.");
+      if (!Number.isInteger(expectedQuantity) || expectedQuantity < 1) {
+        setError("Unit quantities must be whole numbers greater than zero.");
         setSaving(false);
         return;
       }
@@ -334,16 +373,16 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const trackingNumbers = form.trackingLines
       .map((line) => line.tracking_number.trim())
       .filter(Boolean);
-    const totalBoxes = preparedLines.reduce((sum, line) => sum + Number(line.expected_boxes), 0);
-    const masterTracking = form.master_tracking_number.trim();
+    const totalBoxes = preparedLines.reduce((sum, line) => sum + (line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes)), 0);
+    const masterTracking = trackingNumbers[0] ?? "";
     const shipmentPayload = {
       client_id: form.client_id,
-      supplier: form.supplier.trim() || null,
+      supplier: null,
       carrier: form.carrier.trim(),
       master_tracking_number: masterTracking || null,
-      tracking_numbers: Array.from(new Set([masterTracking, ...trackingNumbers].filter(Boolean))),
+      tracking_numbers: Array.from(new Set(trackingNumbers)),
       number_of_boxes: totalBoxes,
-      expected_arrival_date: form.expected_arrival_date || null,
+      expected_arrival_date: null,
       notes: form.notes.trim() || null,
       status_id: isAdmin ? form.status_id : statuses.find((status) => status.name === "In Transit")?.id ?? form.status_id,
     };
@@ -379,7 +418,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           shipment_id: activeShipmentId,
           product_id: lineProductIds[index],
           expected_quantity: Number(line.expected_quantity),
-          expected_boxes: Number(line.expected_boxes),
+          expected_boxes: line.expected_boxes.trim() === "" ? 0 : Number(line.expected_boxes),
           notes: line.notes.trim() || null,
         })),
       );
@@ -451,8 +490,8 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       <ErrorBanner message={error} />
       <Panel title={shipmentId ? "Edit incoming shipment" : "Create incoming shipment"}>
         <form className="space-y-5" onSubmit={(event) => void saveShipment(event)}>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {isClientPortal ? null : (
+          {isClientPortal ? null : (
+            <div className={isAdmin ? "grid gap-4 lg:grid-cols-2" : ""}>
               <Field label="Client">
                 <select className={inputClassName} required value={form.client_id} onChange={(event) => setForm({ ...form, client_id: event.target.value, lines: [emptyLine] })}>
                   <option value="">Select client</option>
@@ -463,48 +502,32 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                   ))}
                 </select>
               </Field>
-            )}
-            <Field label="Supplier optional">
-              <input className={inputClassName} value={form.supplier} onChange={(event) => setForm({ ...form, supplier: event.target.value })} />
-            </Field>
-            <Field label="Carrier optional">
-              <input className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })} />
-            </Field>
-            <Field label="Master tracking number optional">
-              <input className={inputClassName} value={form.master_tracking_number} onChange={(event) => setForm({ ...form, master_tracking_number: event.target.value })} />
-            </Field>
-            <Field label="ETA optional">
-              <input className={inputClassName} type="date" value={form.expected_arrival_date} onChange={(event) => setForm({ ...form, expected_arrival_date: event.target.value })} />
-            </Field>
-            {isAdmin ? (
-              <Field label="Status">
-                <select className={inputClassName} required value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })}>
-                  <option value="">Select status</option>
-                  {statuses.map((status) => (
-                    <option key={status.id} value={status.id}>
-                      {status.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            ) : null}
-          </div>
-          <Field label="Notes optional">
-            <textarea className={textAreaClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
-          </Field>
+              {isAdmin ? (
+                <Field label="Status">
+                  <select className={inputClassName} required value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })}>
+                    <option value="">Select status</option>
+                    {visibleStatuses.map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
+            </div>
+          )}
 
-          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center justify-between gap-3">
+          <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-950">Products in shipment</p>
-                <p className="mt-1 text-xs text-slate-500">Add one or more catalog products. Create a product inline if it is not listed yet.</p>
+                <h3 className="text-sm font-semibold text-slate-950">Products</h3>
               </div>
               <Button type="button" variant="secondary" onClick={() => setForm({ ...form, lines: [...form.lines, emptyLine] })} disabled={!form.client_id || !canEditProductLines}>
-                Add product line
+                + Add Another Product
               </Button>
             </div>
             {form.lines.map((line, index) => (
-              <div key={index} className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_8rem_8rem_minmax(0,1fr)_auto]">
+              <div key={index} className="grid gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_7rem_7rem_minmax(0,1fr)_auto]">
                 <Field label="Product">
                   <select className={inputClassName} disabled={!canEditProductLines} value={line.product_id} onChange={(event) => updateLine(index, { ...line, product_id: event.target.value, new_product_name: "" })}>
                     <option value="">Select product</option>
@@ -515,14 +538,14 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                     ))}
                   </select>
                 </Field>
-                <Field label="Or create new product">
-                  <input className={inputClassName} disabled={!canEditProductLines || Boolean(line.product_id)} value={line.new_product_name} onChange={(event) => updateLine(index, { ...line, new_product_name: event.target.value })} />
+                <Field label="+ Create new product">
+                  <input className={inputClassName} placeholder="Product name" disabled={!canEditProductLines || Boolean(line.product_id)} value={line.new_product_name} onChange={(event) => updateLine(index, { ...line, new_product_name: event.target.value })} />
                 </Field>
                 <Field label="Units">
-                  <input className={inputClassName} min="0" required disabled={!canEditProductLines} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
+                  <input className={inputClassName} min="1" required disabled={!canEditProductLines} type="number" value={line.expected_quantity} onChange={(event) => updateLine(index, { ...line, expected_quantity: event.target.value })} />
                 </Field>
                 <Field label="Boxes">
-                  <input className={inputClassName} min="0" required disabled={!canEditProductLines} type="number" value={line.expected_boxes} onChange={(event) => updateLine(index, { ...line, expected_boxes: event.target.value })} />
+                  <input className={inputClassName} min="0" disabled={!canEditProductLines} type="number" value={line.expected_boxes} onChange={(event) => updateLine(index, { ...line, expected_boxes: event.target.value })} />
                 </Field>
                 <Field label="Notes">
                   <input className={inputClassName} disabled={!canEditProductLines} value={line.notes} onChange={(event) => updateLine(index, { ...line, notes: event.target.value })} />
@@ -536,20 +559,32 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                 ) : null}
               </div>
             ))}
-          </div>
+          </section>
 
-          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-950">Tracking / Boxes optional</p>
-                <p className="mt-1 text-xs text-slate-500">Use one master tracking, per-box tracking rows, or leave this blank for now.</p>
-              </div>
+          <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-sm font-semibold text-slate-950">Shipping Information</h3>
               <Button type="button" variant="secondary" onClick={() => setForm({ ...form, trackingLines: [...form.trackingLines, emptyTrackingLine] })}>
-                Add tracking number
+                + Add Another Tracking Number
               </Button>
             </div>
+            <div className="grid gap-3 lg:grid-cols-[14rem_minmax(0,1fr)]">
+              <Field label="Carrier optional">
+                <select className={inputClassName} value={form.carrier} onChange={(event) => setForm({ ...form, carrier: event.target.value })}>
+                  <option value="">Select carrier</option>
+                  {visibleCarrierOptions.map((carrier) => (
+                    <option key={carrier.id} value={carrier.name}>
+                      {carrier.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Notes optional">
+                <input className={inputClassName} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+              </Field>
+            </div>
             {form.trackingLines.map((line, index) => (
-              <div key={index} className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 lg:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
+              <div key={index} className="grid gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_8rem_minmax(0,1fr)_auto]">
                 <Field label="Tracking number">
                   <input className={inputClassName} value={line.tracking_number} onChange={(event) => updateTrackingLine(index, { ...line, tracking_number: event.target.value })} />
                 </Field>
@@ -568,7 +603,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
                 ) : null}
               </div>
             ))}
-          </div>
+          </section>
 
           <div className="flex gap-2">
             <Button type="submit" disabled={saving || (!isClientPortal && clients.length === 0) || statuses.length === 0}>

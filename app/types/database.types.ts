@@ -195,6 +195,36 @@ export type Database = {
           },
         ];
       };
+      carrier_options: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          deleted_at: string | null;
+          id: string;
+          name: string;
+          sort_order: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          name: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          deleted_at?: string | null;
+          id?: string;
+          name?: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       clients: {
         Row: {
           auth_user_id: string | null;
