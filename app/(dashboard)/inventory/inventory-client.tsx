@@ -9,6 +9,7 @@ import {
   Button,
   EmptyState,
   ErrorBanner,
+  Field,
   inputClassName,
   LoadingState,
   Panel,
@@ -22,21 +23,31 @@ type InventoryRow = Tables<"inventory"> & {
   clients: Client | null;
   products: Product | null;
 };
+type InventoryEditForm = {
+  available_qty: string;
+  damaged_qty: string;
+  incoming_qty: string;
+  received_qty: string;
+  shipped_qty: string;
+};
+type AdminSortOption = "newest" | "oldest" | "customer_az" | "customer_za" | "quantity_high" | "quantity_low";
 
 export function InventoryClient() {
   const { role, clientId } = useAuth();
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({
+  const [editForm, setEditForm] = useState<InventoryEditForm>({
     available_qty: "0",
-    reserved_qty: "0",
-    processing_qty: "0",
     damaged_qty: "0",
+    incoming_qty: "0",
+    received_qty: "0",
+    shipped_qty: "0",
   });
-  const [stockFilter, setStockFilter] = useState<"all" | "available" | "reserved" | "damaged">("all");
+  const [stockFilter, setStockFilter] = useState<"all" | "available" | "damaged">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [productFilter, setProductFilter] = useState("all");
+  const [adminSort, setAdminSort] = useState<AdminSortOption>("newest");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,30 +55,41 @@ export function InventoryClient() {
     () =>
       rows.reduce(
         (accumulator, row) => ({
-          expected: accumulator.expected + row.expected_qty,
-          received: accumulator.received + row.received_qty,
+          incoming: accumulator.incoming + getIncomingUnits(row),
           available: accumulator.available + row.available_qty,
           damaged: accumulator.damaged + row.damaged_qty,
         }),
-        { expected: 0, received: 0, available: 0, damaged: 0 },
+        { incoming: 0, available: 0, damaged: 0 },
       ),
+    [rows],
+  );
+  const clientCountWithInventory = useMemo(
+    () => new Set(rows.map((row) => row.client_id)).size,
     [rows],
   );
   const filteredRows = useMemo(
     () =>
-      rows.filter((row) => {
-        const normalized = searchQuery.trim().toLowerCase();
-        const matchesSearch =
-          !normalized ||
-          row.products?.product_name.toLowerCase().includes(normalized) ||
-          row.products?.sku?.toLowerCase().includes(normalized) ||
-          row.products?.asin?.toLowerCase().includes(normalized);
-        if (stockFilter === "available") return row.available_qty > 0 && matchesSearch;
-        if (stockFilter === "reserved") return row.reserved_qty > 0 && matchesSearch;
-        if (stockFilter === "damaged") return row.damaged_qty > 0 && matchesSearch;
-        return matchesSearch;
-      }),
-    [rows, searchQuery, stockFilter],
+      rows
+        .filter((row) => {
+          const normalized = searchQuery.trim().toLowerCase();
+          const productName = row.products?.product_name ?? "";
+          const sku = row.products?.sku ?? "";
+          const asin = row.products?.asin ?? "";
+          const barcode = row.products?.barcode ?? "";
+          const clientName = row.clients?.company_name ?? "";
+          const matchesSearch =
+            !normalized ||
+            productName.toLowerCase().includes(normalized) ||
+            sku.toLowerCase().includes(normalized) ||
+            asin.toLowerCase().includes(normalized) ||
+            barcode.toLowerCase().includes(normalized) ||
+            clientName.toLowerCase().includes(normalized);
+          if (stockFilter === "available") return row.available_qty > 0 && matchesSearch;
+          if (stockFilter === "damaged") return row.damaged_qty > 0 && matchesSearch;
+          return matchesSearch;
+        })
+        .sort((left, right) => compareInventoryRows(left, right, adminSort)),
+    [adminSort, rows, searchQuery, stockFilter],
   );
 
   const isClientPortal = role === "client";
@@ -151,9 +173,10 @@ export function InventoryClient() {
     setEditingId(row.id);
     setEditForm({
       available_qty: String(row.available_qty),
-      reserved_qty: String(row.reserved_qty),
-      processing_qty: String(row.processing_qty),
       damaged_qty: String(row.damaged_qty),
+      incoming_qty: String(getIncomingUnits(row)),
+      received_qty: String(row.received_qty),
+      shipped_qty: String(row.shipped_qty),
     });
   }
 
@@ -164,9 +187,10 @@ export function InventoryClient() {
 
     const next = {
       available_qty: Number(editForm.available_qty),
-      reserved_qty: Number(editForm.reserved_qty),
-      processing_qty: Number(editForm.processing_qty),
       damaged_qty: Number(editForm.damaged_qty),
+      incoming_qty: Number(editForm.incoming_qty),
+      received_qty: Number(editForm.received_qty),
+      shipped_qty: Number(editForm.shipped_qty),
     };
 
     if (Object.values(next).some((value) => !Number.isFinite(value) || value < 0)) {
@@ -174,11 +198,20 @@ export function InventoryClient() {
       return;
     }
 
+    const receivedDelta = next.received_qty - row.received_qty;
+    const shippedDelta = next.shipped_qty - row.shipped_qty;
+
     setSavingId(row.id);
     setError(null);
     const { error: updateError } = await supabase
       .from("inventory")
-      .update(next)
+      .update({
+        available_qty: Math.max(0, next.available_qty + receivedDelta - shippedDelta),
+        damaged_qty: next.damaged_qty,
+        expected_qty: next.received_qty + next.incoming_qty,
+        received_qty: next.received_qty,
+        shipped_qty: next.shipped_qty,
+      })
       .eq("id", row.id);
 
     if (updateError) {
@@ -192,9 +225,6 @@ export function InventoryClient() {
   }
 
   if (isClientPortal) {
-    const incomingUnits = rows.reduce((sum, row) => sum + Math.max(row.expected_qty - row.received_qty, 0), 0);
-    const totalUnitsInStock = rows.reduce((sum, row) => sum + row.available_qty + row.reserved_qty + row.processing_qty, 0);
-
     return (
       <div className="space-y-5">
         <ErrorBanner message={error} />
@@ -204,9 +234,9 @@ export function InventoryClient() {
         </div>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <Metric label="Total Units in Stock" value={totalUnitsInStock} />
-          <Metric label="Incoming Units" value={incomingUnits} />
-          <Metric label="Damaged" value={totals.damaged} />
+          <Metric label="Total Units in Stock / Available Units" value={totals.available} />
+          <Metric label="Incoming Units" value={totals.incoming} />
+          <Metric label="Damaged Units" value={totals.damaged} />
         </section>
 
         <Panel title="Inventory">
@@ -252,7 +282,6 @@ export function InventoryClient() {
                     <th className="px-4 py-3 font-semibold">Product</th>
                     <th className="px-4 py-3 font-semibold">SKU</th>
                     <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
-                    <th className="px-4 py-3 font-semibold">In Stock Units</th>
                     <th className="px-4 py-3 font-semibold">Incoming Units</th>
                     <th className="px-4 py-3 font-semibold">Damaged Units</th>
                     <th className="px-4 py-3 font-semibold">Available Units</th>
@@ -261,7 +290,7 @@ export function InventoryClient() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {clientFilteredRows.map((row) => {
-                    const incoming = Math.max(row.expected_qty - row.received_qty, 0);
+                    const incoming = getIncomingUnits(row);
                     return (
                       <tr key={row.id} className="hover:bg-slate-50">
                         <td className="px-3 py-2.5 font-medium text-slate-950">
@@ -272,7 +301,6 @@ export function InventoryClient() {
                         </td>
                         <td className="px-3 py-2.5 text-slate-600">{row.products?.sku ?? "-"}</td>
                         <td className="px-3 py-2.5 text-slate-600">{row.products?.asin ?? row.products?.barcode ?? "-"}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{row.available_qty + row.reserved_qty + row.processing_qty}</td>
                         <td className="px-3 py-2.5 text-slate-600">{incoming}</td>
                         <td className="px-3 py-2.5 text-slate-600">{row.damaged_qty}</td>
                         <td className="px-3 py-2.5 font-semibold text-emerald-700">{row.available_qty}</td>
@@ -303,29 +331,37 @@ export function InventoryClient() {
       </div>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Expected" value={totals.expected} />
-        <Metric label="Received" value={totals.received} />
-        <Metric label="Available" value={totals.available} />
-        <Metric label="Damaged" value={totals.damaged} />
+        <Metric label="Available Units" value={totals.available} />
+        <Metric label="Incoming Units" value={totals.incoming} />
+        <Metric label="Damaged Units" value={totals.damaged} />
+        <Metric label="Total Clients with Inventory" value={clientCountWithInventory} />
       </section>
 
       <Panel title="Inventory balances">
-        <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_13rem_auto]">
           <input
             className={inputClassName}
-            placeholder="Search product, SKU, ASIN"
+            placeholder="Search product, SKU, ASIN, customer"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
           />
+          <label className="grid gap-1 text-xs font-medium text-slate-600">
+            Sort by
+            <select className={inputClassName} value={adminSort} onChange={(event) => setAdminSort(event.target.value as AdminSortOption)}>
+              <option value="newest">Date: Newest first</option>
+              <option value="oldest">Date: Oldest first</option>
+              <option value="customer_az">Customer: A-Z</option>
+              <option value="customer_za">Customer: Z-A</option>
+              <option value="quantity_high">Quantity: Highest available first</option>
+              <option value="quantity_low">Quantity: Lowest available first</option>
+            </select>
+          </label>
           <div className="flex flex-wrap gap-2">
           <QuickFilterButton active={stockFilter === "all"} onClick={() => setStockFilter("all")}>
             All
           </QuickFilterButton>
           <QuickFilterButton active={stockFilter === "available"} onClick={() => setStockFilter("available")}>
             Available
-          </QuickFilterButton>
-          <QuickFilterButton active={stockFilter === "reserved"} onClick={() => setStockFilter("reserved")}>
-            Reserved
           </QuickFilterButton>
           <QuickFilterButton active={stockFilter === "damaged"} onClick={() => setStockFilter("damaged")}>
             Damaged
@@ -345,60 +381,44 @@ export function InventoryClient() {
           />
         ) : (
           <div className="max-h-[34rem] overflow-auto">
-            <table className="w-full min-w-[980px] text-left text-sm tabular-nums">
+            <table className="w-full min-w-[920px] text-left text-sm tabular-nums">
               <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 text-xs uppercase tracking-wide text-slate-500 backdrop-blur">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Product</th>
                   <th className="px-4 py-3 font-semibold">Client</th>
                   <th className="px-4 py-3 font-semibold">SKU</th>
-                  <th className="px-4 py-3 font-semibold">Expected</th>
-                  <th className="px-4 py-3 font-semibold">Received</th>
-                  <th className="px-4 py-3 font-semibold">Available</th>
-                  <th className="px-4 py-3 font-semibold">Reserved</th>
-                  <th className="px-4 py-3 font-semibold">Processing</th>
-                  <th className="px-4 py-3 font-semibold">Shipped</th>
-                  <th className="px-4 py-3 font-semibold">Damaged</th>
+                  <th className="px-4 py-3 font-semibold">ASIN / UPC</th>
+                  <th className="px-4 py-3 font-semibold">Incoming Units</th>
+                  <th className="px-4 py-3 font-semibold">Damaged Units</th>
+                  <th className="px-4 py-3 font-semibold">Available Units</th>
                   {isAdmin ? <th className="px-4 py-3 font-semibold">Action</th> : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredRows.map((row) => {
-                  const isEditing = editingId === row.id;
-
                   return (
                     <tr key={row.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-950">
-                        {row.products?.product_name ?? "Unknown product"}
+                        <div className="flex items-center gap-3">
+                          <InventoryThumb product={row.products} />
+                          <span>{row.products?.product_name ?? "Unknown product"}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.clients?.company_name ?? "Unknown"}</td>
                       <td className="px-4 py-3 text-slate-600">{row.products?.sku ?? "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{row.expected_qty}</td>
-                      <td className="px-4 py-3 text-slate-600">{row.received_qty}</td>
-                      <EditableQty editing={isEditing} field="available_qty" form={editForm} setForm={setEditForm} value={row.available_qty} />
-                      <EditableQty editing={isEditing} field="reserved_qty" form={editForm} setForm={setEditForm} value={row.reserved_qty} />
-                      <EditableQty editing={isEditing} field="processing_qty" form={editForm} setForm={setEditForm} value={row.processing_qty} />
-                      <td className="px-4 py-3 text-slate-600">{row.shipped_qty}</td>
-                      <EditableQty editing={isEditing} field="damaged_qty" form={editForm} setForm={setEditForm} value={row.damaged_qty} />
+                      <td className="px-4 py-3 text-slate-600">{row.products?.asin ?? row.products?.barcode ?? "-"}</td>
+                      <td className="px-4 py-3 text-slate-600">{getIncomingUnits(row)}</td>
+                      <td className="px-4 py-3 text-slate-600">{row.damaged_qty}</td>
+                      <td className="px-4 py-3 font-semibold text-emerald-700">{row.available_qty}</td>
                       {isAdmin ? (
                         <td className="px-4 py-3">
-                          {isEditing ? (
-                            <div className="flex gap-2">
-                              <Button type="button" disabled={savingId === row.id} onClick={() => void saveInventory(row)}>
-                                {savingId === row.id ? "Saving..." : "Save"}
-                              </Button>
-                              <Button type="button" variant="secondary" onClick={() => setEditingId(null)}>
-                                Cancel
-                              </Button>
-                            </div>
-                          ) : (
-                            <TableActionButton
-                              aria-label={`Edit stock for ${row.products?.product_name ?? "inventory row"}`}
-                              title="Edit Stock"
-                              onClick={() => startEditing(row)}
-                            >
-                              <SlidersIcon />
-                            </TableActionButton>
-                          )}
+                          <TableActionButton
+                            aria-label={`Edit stock for ${row.products?.product_name ?? "inventory row"}`}
+                            title="Edit Stock"
+                            onClick={() => startEditing(row)}
+                          >
+                            <SlidersIcon />
+                          </TableActionButton>
                         </td>
                       ) : null}
                     </tr>
@@ -409,38 +429,126 @@ export function InventoryClient() {
           </div>
         )}
       </Panel>
+      {isAdmin && editingId ? (
+        <InventoryEditDialog
+          form={editForm}
+          row={rows.find((row) => row.id === editingId) ?? null}
+          saving={savingId === editingId}
+          setForm={setEditForm}
+          onCancel={() => setEditingId(null)}
+          onSave={(row) => void saveInventory(row)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function EditableQty({
-  editing,
-  field,
+function InventoryEditDialog({
   form,
+  onCancel,
+  onSave,
+  row,
+  saving,
   setForm,
-  value,
 }: {
-  editing: boolean;
-  field: "available_qty" | "reserved_qty" | "processing_qty" | "damaged_qty";
-  form: Record<"available_qty" | "reserved_qty" | "processing_qty" | "damaged_qty", string>;
-  setForm: (form: Record<"available_qty" | "reserved_qty" | "processing_qty" | "damaged_qty", string>) => void;
-  value: number;
+  form: InventoryEditForm;
+  onCancel: () => void;
+  onSave: (row: InventoryRow) => void;
+  row: InventoryRow | null;
+  saving: boolean;
+  setForm: (form: InventoryEditForm) => void;
 }) {
-  if (!editing) {
-    return <td className="px-4 py-3 text-slate-600">{value}</td>;
-  }
+  if (!row) return null;
+
+  const productName = row.products?.product_name ?? "Unknown product";
 
   return (
-    <td className="px-4 py-3">
-      <input
-        className={`${inputClassName} w-24`}
-        min="0"
-        type="number"
-        value={form[field]}
-        onChange={(event) => setForm({ ...form, [field]: event.target.value })}
-      />
-    </td>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4">
+      <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-950">Edit Inventory</h3>
+          <p className="mt-1 text-sm text-slate-500">{productName} - {row.clients?.company_name ?? "Unknown client"}</p>
+        </div>
+        <div className="grid gap-4 p-5 sm:grid-cols-2">
+          <Field label="Available Units">
+            <input
+              className={inputClassName}
+              min="0"
+              type="number"
+              value={form.available_qty}
+              onChange={(event) => setForm({ ...form, available_qty: event.target.value })}
+            />
+          </Field>
+          <Field label="Incoming Units">
+            <input
+              className={inputClassName}
+              min="0"
+              type="number"
+              value={form.incoming_qty}
+              onChange={(event) => setForm({ ...form, incoming_qty: event.target.value })}
+            />
+          </Field>
+          <Field label="Damaged Units">
+            <input
+              className={inputClassName}
+              min="0"
+              type="number"
+              value={form.damaged_qty}
+              onChange={(event) => setForm({ ...form, damaged_qty: event.target.value })}
+            />
+          </Field>
+          <Field label="Received Units">
+            <input
+              className={inputClassName}
+              min="0"
+              type="number"
+              value={form.received_qty}
+              onChange={(event) => setForm({ ...form, received_qty: event.target.value })}
+            />
+          </Field>
+          <Field label="Shipped Units">
+            <input
+              className={inputClassName}
+              min="0"
+              type="number"
+              value={form.shipped_qty}
+              onChange={(event) => setForm({ ...form, shipped_qty: event.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={saving} onClick={() => onSave(row)}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
+}
+
+function getIncomingUnits(row: InventoryRow) {
+  return Math.max(row.expected_qty - row.received_qty, 0);
+}
+
+function compareInventoryRows(left: InventoryRow, right: InventoryRow, sort: AdminSortOption) {
+  if (sort === "oldest") {
+    return new Date(left.updated_at).getTime() - new Date(right.updated_at).getTime();
+  }
+
+  if (sort === "customer_az" || sort === "customer_za") {
+    const difference = (left.clients?.company_name ?? "").localeCompare(right.clients?.company_name ?? "");
+    return sort === "customer_az" ? difference : -difference;
+  }
+
+  if (sort === "quantity_high" || sort === "quantity_low") {
+    const difference = right.available_qty - left.available_qty;
+    return sort === "quantity_high" ? difference : -difference;
+  }
+
+  return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
