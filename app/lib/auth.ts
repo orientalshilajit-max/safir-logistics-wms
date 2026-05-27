@@ -16,6 +16,10 @@ export function getUserRole(user: User | null): UserRole {
   return "client";
 }
 
+export function getCurrentRole(user: User | null) {
+  return getUserRole(user);
+}
+
 export function isAdmin(user: User | null) {
   return getUserRole(user) === "admin";
 }
@@ -41,6 +45,10 @@ export function getCurrentClientId(user: User | null) {
   const clientId = getUserClientId(user);
 
   return clientId && isUuid(clientId) ? clientId : null;
+}
+
+export function getCurrentUser(user: User | null) {
+  return user;
 }
 
 export function canAccessClient(user: User | null, clientId: string | null) {

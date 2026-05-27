@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session, User } from "@supabase/supabase-js";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import {
   AUTH_REFRESH_COOKIE,
@@ -30,13 +30,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [clientLinkFailed, setClientLinkFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const attemptedClientSyncUserId = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
     supabase.auth
       .getSession()
-      .then(({ data, error: sessionError }) => {
+      .then(async ({ data, error: sessionError }) => {
         if (!mounted) {
           return;
         }
@@ -45,11 +46,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setError(sessionError.message);
         }
 
-        setSession(data.session);
-        setUser(data.session?.user ?? null);
+        const cookieSession = data.session ?? (await recoverSessionFromCookies());
+
+        setSession(cookieSession);
+        setUser(cookieSession?.user ?? null);
         setLinkedClientId(null);
         setClientLinkFailed(false);
-        syncAuthCookies(data.session);
+        attemptedClientSyncUserId.current = null;
+        syncAuthCookies(cookieSession);
       })
       .finally(() => {
         if (mounted) {
@@ -64,6 +68,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(nextSession?.user ?? null);
       setLinkedClientId(null);
       setClientLinkFailed(false);
+      if (!nextSession) {
+        attemptedClientSyncUserId.current = null;
+      }
       syncAuthCookies(nextSession);
       setLoading(false);
     });
@@ -77,10 +84,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const role = getUserRole(user);
 
-    if (!session?.access_token || role !== "client") {
+    if (!session?.access_token || role !== "client" || !user?.id) {
       return;
     }
 
+    if (attemptedClientSyncUserId.current === user.id) {
+      return;
+    }
+
+    attemptedClientSyncUserId.current = user.id;
     void fetch("/api/auth/client-active", {
       method: "POST",
       headers: {
@@ -134,6 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setLinkedClientId(null);
         setClientLinkFailed(false);
+        attemptedClientSyncUserId.current = null;
         syncAuthCookies(null);
         window.location.assign("/login");
       },
@@ -142,6 +155,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+async function recoverSessionFromCookies() {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const refreshToken = readCookie(AUTH_REFRESH_COOKIE);
+
+  if (!refreshToken) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.refreshSession({
+    refresh_token: refreshToken,
+  });
+
+  if (error) {
+    console.error("[auth-session-recovery]", error);
+    return null;
+  }
+
+  return data.session;
+}
+
+function readCookie(name: string) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const entry = document.cookie
+    .split("; ")
+    .find((cookie) => cookie.startsWith(`${name}=`));
+
+  return entry ? decodeURIComponent(entry.slice(name.length + 1)) : null;
 }
 
 export function useAuth() {

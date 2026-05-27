@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { User } from "@supabase/supabase-js";
-import { CLIENT_ACCOUNT_LINK_ERROR, getCurrentClientId, getUserRole } from "@/app/lib/auth";
+import { CLIENT_ACCOUNT_LINK_ERROR, getCurrentRole } from "@/app/lib/auth";
+import { resolveAndRepairCurrentClientId } from "@/app/lib/client-auth-resolution";
 import {
   createSupabaseAdminClient,
   createSupabaseServerClient,
@@ -23,7 +23,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid session." }, { status: 401 });
   }
 
-  if (getUserRole(user) !== "client") {
+  const role = getCurrentRole(user);
+
+  if (role !== "client") {
     return NextResponse.json({ ok: true });
   }
 
@@ -33,28 +35,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Server auth sync is not configured." }, { status: 501 });
   }
 
-  let resolvedClient: ClientLink | null;
-  const failedLookups: string[] = [];
+  let resolution: Awaited<ReturnType<typeof resolveAndRepairCurrentClientId>>;
 
   try {
-    resolvedClient = await resolveClientForUser(user, adminClient, failedLookups);
+    resolution = await resolveAndRepairCurrentClientId(user, adminClient);
   } catch (resolveError) {
     console.error("[client-active-sync]", {
       action: "resolve client",
       user_id: user.id,
       email: user.email ?? null,
-      failed_lookups: failedLookups,
+      role,
+      app_metadata_client_id: user.app_metadata?.client_id ?? null,
+      user_metadata_client_id: user.user_metadata?.client_id ?? null,
       error: resolveError,
     });
     return NextResponse.json({ error: CLIENT_ACCOUNT_LINK_ERROR }, { status: 400 });
   }
 
-  if (!resolvedClient) {
+  console.error("[client-active-sync]", {
+    action: resolution.clientId ? "client link resolved" : "client link failed",
+    user_id: user.id,
+    email: user.email ?? null,
+    role,
+    app_metadata_client_id: user.app_metadata?.client_id ?? null,
+    user_metadata_client_id: user.user_metadata?.client_id ?? null,
+    resolved_client_id: resolution.clientId,
+    source: resolution.source,
+    failed_lookups: resolution.failedLookups,
+  });
+
+  if (!resolution.clientId) {
     console.error("[client-active-sync]", {
       action: "client link failed",
       user_id: user.id,
       email: user.email ?? null,
-      failed_lookups: failedLookups,
+      role,
+      failed_lookups: resolution.failedLookups,
     });
     return NextResponse.json(
       { error: CLIENT_ACCOUNT_LINK_ERROR },
@@ -62,130 +78,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { error: metadataError } = await adminClient.auth.admin.updateUserById(user.id, {
-    app_metadata: {
-      ...(user.app_metadata ?? {}),
-      role: "client",
-      client_id: resolvedClient.id,
-    },
-    user_metadata: {
-      ...(user.user_metadata ?? {}),
-      client_id: resolvedClient.id,
-    },
-  });
-
-  if (metadataError) {
-    console.error("[client-active-sync]", {
-      action: "update auth metadata",
-      client_id: resolvedClient.id,
-      user_id: user.id,
-      error: metadataError,
-    });
-    return NextResponse.json({ error: metadataError.message }, { status: 400 });
-  }
-
-  const { error: clientUpdateError } = await adminClient
-    .from("clients")
-    .update({
-      auth_user_id: user.id,
-      login_status: "active",
-    })
-    .eq("id", resolvedClient.id)
-    .is("deleted_at", null);
-
-  if (clientUpdateError) {
-    console.error("[client-active-sync]", {
-      action: "update client link",
-      client_id: resolvedClient.id,
-      user_id: user.id,
-      error: clientUpdateError,
-    });
-    return NextResponse.json({ error: clientUpdateError.message }, { status: 400 });
-  }
-
-  return NextResponse.json({ ok: true, client_id: resolvedClient.id });
-}
-
-type AdminClient = NonNullable<ReturnType<typeof createSupabaseAdminClient>>;
-type ClientLink = {
-  id: string;
-};
-
-async function resolveClientForUser(
-  user: User,
-  adminClient: AdminClient,
-  failedLookups: string[],
-): Promise<ClientLink | null> {
-  const metadataClientId = getCurrentClientId(user);
-
-  if (metadataClientId) {
-    const { data } = await adminClient
-      .from("clients")
-      .select("id")
-      .eq("id", metadataClientId)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    if (data) {
-      return data;
-    }
-
-    failedLookups.push("metadata_client_id_not_found");
-  } else {
-    failedLookups.push("metadata_client_id_missing");
-  }
-
-  const { data: linkedClient } = await adminClient
-    .from("clients")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .is("deleted_at", null)
-    .maybeSingle();
-
-  if (linkedClient) {
-    return linkedClient;
-  }
-
-  failedLookups.push("clients_auth_user_id_not_found");
-
-  const normalizedEmail = user.email?.trim().toLowerCase();
-
-  if (!normalizedEmail) {
-    failedLookups.push("auth_email_missing");
-    return null;
-  }
-
-  const pageSize = 1000;
-  let offset = 0;
-
-  while (offset < 20000) {
-    const { data: emailClients, error } = await adminClient
-      .from("clients")
-      .select("id, email")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + pageSize - 1);
-
-    if (error) {
-      throw error;
-    }
-
-    const match = emailClients?.find((client) => client.email.trim().toLowerCase() === normalizedEmail);
-
-    if (match) {
-      return match;
-    }
-
-    if (!emailClients || emailClients.length < pageSize) {
-      failedLookups.push("clients_email_not_found");
-      return null;
-    }
-
-    offset += pageSize;
-  }
-
-  failedLookups.push("clients_email_not_found");
-  return null;
+  return NextResponse.json({ ok: true, client_id: resolution.clientId });
 }
 
 function getBearerToken(request: NextRequest) {
