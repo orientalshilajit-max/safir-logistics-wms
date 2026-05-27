@@ -91,6 +91,8 @@ export function IncomingShipmentsClient({
     const shipmentsQuery = supabase
       .from("incoming_shipments")
       .select("*, clients(id, company_name), statuses(id, name, color), incoming_items(id, expected_quantity, expected_boxes, received_quantity, received_boxes, damaged_quantity, missing_quantity, is_unexpected, inventory_posted_at, notes, products(product_name, sku, asin, barcode)), incoming_tracking_boxes(id, tracking_number, status, inventory_posted_at, box_count, notes, carrier)")
+      .is("incoming_items.deleted_at", null)
+      .is("incoming_tracking_boxes.deleted_at", null)
       .order("created_at", { ascending: false });
 
     if (isClientPortal) {

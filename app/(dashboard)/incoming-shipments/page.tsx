@@ -1,5 +1,7 @@
 import { IncomingShipmentsClient } from "@/app/(dashboard)/incoming-shipments/incoming-shipments-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function IncomingShipmentsPage({
   searchParams,
 }: {

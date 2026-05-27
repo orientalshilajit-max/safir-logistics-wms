@@ -601,6 +601,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       expected_arrival_date: null,
       notes: form.notes.trim() || null,
       status_id: isAdmin || shipmentId ? form.status_id : statuses.find((status) => status.name === "In Transit")?.id ?? form.status_id,
+      updated_at: new Date().toISOString(),
     };
 
     const shipmentResult = shipmentId
