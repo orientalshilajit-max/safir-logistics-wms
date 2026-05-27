@@ -171,7 +171,7 @@ begin
   select
     coalesce(array_agg(row_value ->> 'tracking_number') filter (where length(btrim(row_value ->> 'tracking_number')) > 0), '{}'::text[]),
     nullif(btrim((p_tracking_rows -> 0) ->> 'tracking_number'), ''),
-    coalesce(sum(nullif(row_value ->> 'box_count', '')::integer), 0)
+    coalesce(sum(coalesce(nullif(row_value ->> 'box_count', '')::integer, 1)), 0)
   into tracking_numbers, first_tracking, total_boxes
   from jsonb_array_elements(coalesce(p_tracking_rows, '[]'::jsonb)) row_value
   where nullif(row_value ->> 'box_count', '') is null
@@ -217,7 +217,7 @@ begin
         p_shipment_id,
         btrim(row_record ->> 'tracking_number'),
         nullif(btrim(coalesce(p_carrier, '')), ''),
-        nullif(row_record ->> 'box_count', '')::integer,
+        coalesce(nullif(row_record ->> 'box_count', '')::integer, 1),
         nullif(btrim(coalesce(row_record ->> 'notes', '')), '')
       );
     end if;

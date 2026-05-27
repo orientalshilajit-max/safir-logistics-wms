@@ -43,7 +43,6 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   const isClientPortal = role === "client";
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [statuses, setStatuses] = useState<Status[]>([]);
-  const [activeTab, setActiveTab] = useState<"products" | "tracking" | "documents" | "notes" | "history">("products");
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
   const [issueMode, setIssueMode] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -94,7 +93,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
               damaged: String(item.damaged_quantity),
               missing: String(item.missing_quantity),
               notes: item.notes ?? "",
-              boxes: String(item.received_boxes ?? item.expected_boxes),
+              boxes: String(defaultBoxCount(item.received_boxes ?? item.expected_boxes)),
               received: String(received),
             },
           ];
@@ -104,10 +103,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     setIssueMode(
       Object.fromEntries(
         sortedItems.map((item) => [
-          item.id,
-          hasItemIssue(item) ||
+            item.id,
+            hasItemIssue(item) ||
             (item.received_boxes !== null &&
-              item.received_boxes !== item.expected_boxes),
+              item.received_boxes !== defaultBoxCount(item.expected_boxes)),
         ]),
       ),
     );
@@ -139,10 +138,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
     const items = shipment?.incoming_items ?? [];
     return {
       expected: items.reduce((sum, item) => sum + item.expected_quantity, 0),
-      received: items.reduce((sum, item) => sum + (item.received_quantity || item.expected_quantity), 0),
-      boxes: items.reduce((sum, item) => sum + item.expected_boxes, 0),
-      posted: items.filter((item) => item.inventory_posted_at).length,
-      rows: items.length,
+      received: items.reduce((sum, item) => sum + item.received_quantity, 0),
     };
   }, [shipment]);
 
@@ -238,7 +234,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       .from("incoming_shipments")
       .update({ actual_received_boxes: shipment.incoming_items.reduce((sum, row) => {
         if (row.id === item.id) return sum + parsed.boxes;
-        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : row.received_boxes ?? row.expected_boxes);
+        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : defaultBoxCount(row.received_boxes ?? row.expected_boxes));
       }, 0) })
       .eq("id", shipment.id);
 
@@ -287,7 +283,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       parsed.received !== item.expected_quantity ||
       parsed.damaged > 0 ||
       parsed.missing > 0 ||
-      parsed.boxes !== item.expected_boxes ||
+      parsed.boxes !== defaultBoxCount(item.expected_boxes) ||
       item.is_unexpected;
 
     if (hasDiscrepancy && !window.confirm("This row has an issue. Post actual quantities to inventory?")) {
@@ -302,7 +298,7 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
       .from("incoming_shipments")
       .update({ actual_received_boxes: shipment.incoming_items.reduce((sum, row) => {
         if (row.id === item.id) return sum + parsed.boxes;
-        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : row.received_boxes ?? row.expected_boxes);
+        return sum + (drafts[row.id]?.boxes ? Number(drafts[row.id].boxes) : defaultBoxCount(row.received_boxes ?? row.expected_boxes));
       }, 0) })
       .eq("id", shipment.id);
 
@@ -402,11 +398,10 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Summary label="Expected Qty" value={totals.expected} />
-        <Summary label="Rows Posted" value={`${totals.posted}/${totals.rows}`} />
-        <Summary label="Boxes" value={shipment.actual_received_boxes ?? totals.boxes} />
+      <div className="grid gap-4 md:grid-cols-3">
         <Summary label="Status" value={shipment.statuses?.name ?? "In Transit"} />
+        <Summary label="Expected Quantity" value={totals.expected} />
+        <Summary label="Received Quantity" value={totals.received} />
       </div>
 
       {isAdmin ? (
@@ -417,53 +412,36 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
         </div>
       ) : null}
 
-      <Panel title="Shipment details">
-        <div className="mb-4 flex gap-4 border-b border-slate-200 text-sm font-semibold text-slate-600">
-          {[
-            ["products", "Products"],
-            ["tracking", "Tracking / Boxes"],
-            ["documents", "Documents"],
-            ["notes", "Notes"],
-            ["history", "History"],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className={activeTab === value ? "border-b-2 border-blue-600 pb-3 text-blue-700" : "pb-3"}
-              onClick={() => setActiveTab(value as typeof activeTab)}
-            >
-              {label}
-            </button>
-          ))}
+      <Panel title="Products">
+        <ReceivingProductsTable
+          drafts={drafts}
+          isAdmin={isAdmin}
+          issueMode={issueMode}
+          onConfirmReceived={confirmReceived}
+          onMarkIssue={markIssue}
+          onSaveRow={saveRow}
+          savingId={savingId}
+          setDrafts={setDrafts}
+          setIssueMode={setIssueMode}
+          shipment={shipment}
+        />
+      </Panel>
+
+      <Panel title="Shipping Information">
+        <TrackingTable shipment={shipment} />
+      </Panel>
+
+      <Panel title="Documents">
+        <p className="text-sm text-slate-500">Shipment documents are managed from Files & Documents.</p>
+      </Panel>
+
+      <Panel title="Notes / History">
+        <div className="space-y-2 text-sm text-slate-600">
+          <p>{shipment.notes ?? "No shipment notes."}</p>
+          <p>Created {formatDateTime(shipment.created_at)}</p>
+          <p>Updated {formatDateTime(shipment.updated_at)}</p>
+          {shipment.incoming_items.some((item) => item.inventory_posted_at) ? <p>Inventory posted for received product rows.</p> : null}
         </div>
-        {activeTab === "products" ? (
-          <ReceivingProductsTable
-            drafts={drafts}
-            isAdmin={isAdmin}
-            issueMode={issueMode}
-            onConfirmReceived={confirmReceived}
-            onMarkIssue={markIssue}
-            onSaveRow={saveRow}
-            savingId={savingId}
-            setDrafts={setDrafts}
-            setIssueMode={setIssueMode}
-            shipment={shipment}
-          />
-        ) : null}
-        {activeTab === "tracking" ? <TrackingTable shipment={shipment} /> : null}
-        {activeTab === "documents" ? (
-          <p className="text-sm text-slate-500">Shipment documents are managed from Files & Documents.</p>
-        ) : null}
-        {activeTab === "notes" ? (
-          <p className="text-sm text-slate-600">{shipment.notes ?? "No shipment notes."}</p>
-        ) : null}
-        {activeTab === "history" ? (
-          <div className="space-y-2 text-sm text-slate-600">
-            <p>Created {formatDateTime(shipment.created_at)}</p>
-            <p>Updated {formatDateTime(shipment.updated_at)}</p>
-            {shipment.incoming_items.some((item) => item.inventory_posted_at) ? <p>Inventory posted for received product rows.</p> : null}
-          </div>
-        ) : null}
       </Panel>
     </div>
   );
@@ -521,7 +499,7 @@ function ReceivingProductsTable({
                     parsed.received !== item.expected_quantity ||
                     parsed.damaged > 0 ||
                     parsed.missing > 0 ||
-                    parsed.boxes !== item.expected_boxes ||
+                    parsed.boxes !== defaultBoxCount(item.expected_boxes) ||
                     item.is_unexpected;
                   const showIssueFields = issueMode[item.id] || rowIssue;
 
@@ -582,16 +560,16 @@ function ReceivingProductsTable({
                             ) : null}
                           </div>
                         ) : (
-                          <span className="text-slate-600">{item.received_quantity || item.expected_quantity}</span>
+                          <span className="text-slate-600">{item.received_quantity}</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-center">
                         {isAdmin && !item.inventory_posted_at ? (
                           <input
                             className={`${inputClassName} w-28`}
-                            min="0"
+                            min="1"
                             type="number"
-                            value={draft?.boxes ?? String(item.expected_boxes)}
+                            value={draft?.boxes ?? String(defaultBoxCount(item.expected_boxes))}
                             onChange={(event) =>
                               setDrafts((current) => ({
                                 ...current,
@@ -600,7 +578,7 @@ function ReceivingProductsTable({
                             }
                           />
                         ) : (
-                          <span className="text-slate-600">{item.received_boxes ?? item.expected_boxes}</span>
+                          <span className="text-slate-600">{defaultBoxCount(item.received_boxes ?? item.expected_boxes)}</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5">
@@ -697,7 +675,7 @@ function TrackingTable({ shipment }: { shipment: Shipment }) {
             <tr key={box.id}>
               <td className="px-3 py-2.5 font-medium text-slate-950">{box.tracking_number}</td>
               <td className="px-3 py-2.5 text-slate-600">{box.carrier ?? "-"}</td>
-              <td className="px-3 py-2.5 text-center text-slate-600">{box.box_count ?? "-"}</td>
+              <td className="px-3 py-2.5 text-center text-slate-600">{defaultBoxCount(box.box_count)}</td>
               <td className="px-3 py-2.5 text-slate-600">{box.notes ?? "-"}</td>
               <td className="px-3 py-2.5"><StatusBadge tone={box.status === "Issue" ? "rose" : box.status === "Received" ? "emerald" : box.status === "Delivered" ? "orange" : "blue"}>{box.status}</StatusBadge></td>
             </tr>
@@ -733,7 +711,7 @@ function parseDraft(
   const received = Number(draft?.received ?? item.expected_quantity);
   const damaged = Number(draft?.damaged ?? item.damaged_quantity);
   const missing = Number(draft?.missing ?? item.missing_quantity);
-  const boxes = Number(draft?.boxes ?? item.expected_boxes);
+  const boxes = Number(draft?.boxes ?? defaultBoxCount(item.expected_boxes));
 
   if (!Number.isInteger(received) || received < 0) {
     return { error: "Actual quantity must be a whole number zero or greater." } as const;
@@ -747,8 +725,8 @@ function parseDraft(
     return { error: "Missing quantity must be a whole number zero or greater." } as const;
   }
 
-  if (!Number.isInteger(boxes) || boxes < 0) {
-    return { error: "Boxes must be a whole number zero or greater." } as const;
+  if (!Number.isInteger(boxes) || boxes < 1) {
+    return { error: "Boxes must be a whole number greater than zero." } as const;
   }
 
   return {
@@ -774,6 +752,7 @@ function rowStatus(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: strin
   if (rowIssue || shipmentStatus === "Issue") return "Issue";
   if (item.inventory_posted_at) return "Available";
   if (shipmentStatus === "Arrived at Prep") return "Receiving";
+  if (shipmentStatus === "Receiving") return "Receiving";
   return "In Transit";
 }
 
@@ -783,4 +762,8 @@ function rowStatusTone(item: ShipmentItem, rowIssue: boolean, shipmentStatus?: s
   if (status === "Receiving") return "orange";
   if (status === "Issue") return "rose";
   return "blue";
+}
+
+function defaultBoxCount(value: number | null | undefined) {
+  return typeof value === "number" && value > 0 ? value : 1;
 }

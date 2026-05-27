@@ -400,7 +400,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const trackingNumbers = form.trackingLines
       .map((line) => line.tracking_number.trim())
       .filter(Boolean);
-    const totalBoxes = form.trackingLines.reduce((sum, line) => sum + (line.box_count.trim() === "" ? 0 : Number(line.box_count)), 0);
+    const totalBoxes = form.trackingLines.reduce((sum, line) => sum + (line.box_count.trim() === "" ? 1 : Number(line.box_count)), 0);
     const masterTracking = trackingNumbers[0] ?? "";
 
     if (isClientPortal && shipmentId && !canFullyEditShipment && canEditLimitedClientFields) {
@@ -412,7 +412,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
           .map((line) => ({ id: line.id as string, notes: line.notes.trim() })) as Json,
         p_shipment_id: shipmentId,
         p_tracking_rows: form.trackingLines.map((line) => ({
-          box_count: line.box_count.trim(),
+          box_count: line.box_count.trim() || "1",
           notes: line.notes.trim(),
           tracking_number: line.tracking_number.trim(),
         })) as Json,
@@ -537,7 +537,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
             shipment_id: activeShipmentId,
             tracking_number: line.tracking_number.trim(),
             carrier: form.carrier.trim() || null,
-            box_count: line.box_count.trim() === "" ? null : Number(line.box_count),
+            box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
             notes: line.notes.trim() || null,
           })),
         );

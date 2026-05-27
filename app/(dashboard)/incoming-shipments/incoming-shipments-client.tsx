@@ -136,14 +136,12 @@ export function IncomingShipmentsClient({
         if (shipment.archived_at) return totals;
 
         const status = getDisplayStatus(shipment);
-        totals.total += 1;
         if (status === "In Transit") totals.inTransit += 1;
-        if (status === "Arrived at Prep") totals.receiving += 1;
-        if (status === "Received") totals.received += 1;
-        if (status === "Issue") totals.issue += 1;
+        if (status === "Arrived at Prep" || status === "Received") totals.arrivedReceived += 1;
+        if (status === "Issue") totals.needAttention += 1;
         return totals;
       },
-      { total: 0, inTransit: 0, receiving: 0, received: 0, issue: 0 },
+      { inTransit: 0, arrivedReceived: 0, needAttention: 0 },
     );
   }, [shipments]);
   const adminShipmentStats = shipmentStats;
@@ -167,7 +165,20 @@ export function IncomingShipmentsClient({
       });
 
       if (deleteError) {
-        setError(deleteError.message);
+        if (deleteError.message.includes("Could not find the function")) {
+          const { error: directDeleteError } = await supabase
+            .from("incoming_shipments")
+            .update({ deleted_at: new Date().toISOString() })
+            .eq("id", shipment.id);
+
+          if (directDeleteError) {
+            setError(directDeleteError.message);
+          } else {
+            setShipments((current) => current.filter((currentShipment) => currentShipment.id !== shipment.id));
+          }
+        } else {
+          setError(deleteError.message);
+        }
       } else {
         setShipments((current) => current.filter((currentShipment) => currentShipment.id !== shipment.id));
       }
@@ -175,10 +186,6 @@ export function IncomingShipmentsClient({
       setActionShipmentId(null);
       return;
     }
-
-    window.alert("This shipment already has warehouse activity and cannot be deleted. You can archive it instead.");
-    const confirmed = window.confirm("Archive this shipment?");
-    if (!confirmed) return;
 
     setActionShipmentId(shipment.id);
     setError(null);
@@ -189,8 +196,29 @@ export function IncomingShipmentsClient({
     });
 
     if (archiveError) {
-      setError(archiveError.message);
+      if (archiveError.message.includes("Could not find the function")) {
+        const { error: directArchiveError } = await supabase
+          .from("incoming_shipments")
+          .update({ archived_at: archivedAt })
+          .eq("id", shipment.id);
+
+        if (directArchiveError) {
+          setError(directArchiveError.message);
+        } else {
+          setError("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
+          setShipments((current) =>
+            current.map((currentShipment) =>
+              currentShipment.id === shipment.id
+                ? { ...currentShipment, archived_at: archivedAt }
+                : currentShipment,
+            ),
+          );
+        }
+      } else {
+        setError(archiveError.message);
+      }
     } else {
+      setError("This shipment already has warehouse activity and cannot be deleted. It was archived instead.");
       setShipments((current) =>
         current.map((currentShipment) =>
           currentShipment.id === shipment.id
@@ -219,12 +247,10 @@ export function IncomingShipmentsClient({
           </Link>
         </div>
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <ClientStat label="Total Shipments" value={shipmentStats.total} sublabel="All time" />
+        <section className="grid gap-4 sm:grid-cols-3">
           <ClientStat label="In Transit" value={shipmentStats.inTransit} sublabel="Shipments on the way" />
-          <ClientStat label="Arrived / Receiving" value={shipmentStats.receiving} sublabel="At prep center" />
-          <ClientStat label="Received" value={shipmentStats.received} sublabel="Received" />
-          <ClientStat label="Issue" value={shipmentStats.issue} sublabel="Needs attention" />
+          <ClientStat label="Arrived / Received" value={shipmentStats.arrivedReceived} sublabel="At prep or completed" />
+          <ClientStat label="Need Attention" value={shipmentStats.needAttention} sublabel="Issue or discrepancy" />
         </section>
 
         <Panel title="Incoming Shipments">
@@ -294,12 +320,10 @@ export function IncomingShipmentsClient({
         </Link>
       </div>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <ClientStat label="Total Shipments" value={adminShipmentStats.total} sublabel="All clients" />
+      <section className="grid gap-4 sm:grid-cols-3">
         <ClientStat label="In Transit" value={adminShipmentStats.inTransit} sublabel="Shipments on the way" />
-        <ClientStat label="Arrived / Receiving" value={adminShipmentStats.receiving} sublabel="At prep center" />
-        <ClientStat label="Received" value={adminShipmentStats.received} sublabel="Received" />
-        <ClientStat label="Issue" value={adminShipmentStats.issue} sublabel="Needs attention" />
+        <ClientStat label="Arrived / Received" value={adminShipmentStats.arrivedReceived} sublabel="At prep or completed" />
+        <ClientStat label="Need Attention" value={adminShipmentStats.needAttention} sublabel="Issue or discrepancy" />
       </section>
 
       <Panel title="Incoming shipments">
@@ -358,10 +382,11 @@ export function IncomingShipmentsClient({
 }
 
 export function getShipmentSummary(shipment: Shipment) {
-  const totalBoxes = shipment.incoming_items.reduce((sum, item) => sum + item.expected_boxes, 0);
+  const itemBoxes = shipment.incoming_items.reduce((sum, item) => sum + defaultBoxCount(item.expected_boxes), 0);
+  const trackingBoxes = shipment.incoming_tracking_boxes.reduce((sum, box) => sum + defaultBoxCount(box.box_count), 0);
   const deliveredBoxes = shipment.incoming_tracking_boxes.filter((box) =>
     ["Delivered", "Received", "Issue"].includes(box.status),
-  ).reduce((sum, box) => sum + (box.box_count ?? 1), 0);
+  ).reduce((sum, box) => sum + defaultBoxCount(box.box_count), 0);
   const expectedUnits = shipment.incoming_items.reduce(
     (sum, item) => sum + item.expected_quantity,
     0,
@@ -386,9 +411,13 @@ export function getShipmentSummary(shipment: Shipment) {
     expectedUnits,
     issueCount,
     receivedUnits,
-    totalBoxes: totalBoxes || shipment.number_of_boxes,
-    trackingRows: totalBoxes,
+    totalBoxes: shipment.number_of_boxes > 0 ? shipment.number_of_boxes : trackingBoxes || itemBoxes || 1,
+    trackingRows: trackingBoxes || itemBoxes || 1,
   };
+}
+
+function defaultBoxCount(value: number | null | undefined) {
+  return typeof value === "number" && value > 0 ? value : 1;
 }
 
 function ClientStat({
