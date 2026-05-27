@@ -387,6 +387,9 @@ export function ShipmentDetailClient({ shipmentId }: { shipmentId: string }) {
   return (
     <div className="space-y-5">
       <div className="flex justify-end gap-2">
+        <Link href={`/incoming-shipments/${shipmentId}/edit`} className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700">
+          Edit shipment
+        </Link>
         <Link href="/incoming-shipments" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
           Back to shipments
         </Link>

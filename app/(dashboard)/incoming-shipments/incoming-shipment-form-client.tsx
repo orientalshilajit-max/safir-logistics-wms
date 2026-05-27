@@ -31,7 +31,7 @@ type Shipment = Tables<"incoming_shipments"> & {
   >[];
   incoming_tracking_boxes: Pick<
     Tables<"incoming_tracking_boxes">,
-    "id" | "tracking_number" | "box_count" | "notes" | "status"
+    "id" | "tracking_number" | "box_count" | "inventory_posted_at" | "notes" | "status"
   >[];
   statuses: Pick<Tables<"statuses">, "name"> | null;
 };
@@ -43,6 +43,8 @@ type ShipmentLine = {
   notes: string;
 };
 type TrackingLine = {
+  id?: string;
+  inventory_posted_at?: string | null;
   tracking_number: string;
   box_count: string;
   notes: string;
@@ -106,7 +108,6 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
   const [carrierOptions, setCarrierOptions] = useState<CarrierOption[]>([]);
   const [shipmentStatusName, setShipmentStatusName] = useState("In Transit");
   const [form, setForm] = useState<ShipmentForm>(emptyForm);
-  const [hasPostedItems, setHasPostedItems] = useState(false);
   const [creatingProductRows, setCreatingProductRows] = useState<Record<number, boolean>>({});
   const [creatingProductIndex, setCreatingProductIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -171,7 +172,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     const shipmentQuery = shipmentId
       ? supabase
         .from("incoming_shipments")
-        .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, notes, status)")
+        .select("*, statuses(name), incoming_items(id, product_id, expected_quantity, expected_boxes, notes, inventory_posted_at), incoming_tracking_boxes(id, tracking_number, box_count, inventory_posted_at, notes, status)")
         .eq("id", shipmentId)
         .single()
       : Promise.resolve({ data: null, error: null });
@@ -206,10 +207,11 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
       setError(shipmentResult.error.message);
     } else if (shipmentResult.data) {
       const shipment = shipmentResult.data as Shipment;
-      setHasPostedItems(shipment.incoming_items.some((item) => Boolean(item.inventory_posted_at)));
       setShipmentStatusName(shipment.statuses?.name ?? "In Transit");
       const trackingLines = shipment.incoming_tracking_boxes.length > 0
         ? shipment.incoming_tracking_boxes.map((box) => ({
+          id: box.id,
+          inventory_posted_at: box.inventory_posted_at,
           tracking_number: box.tracking_number,
           box_count: box.box_count === null ? "1" : String(box.box_count),
           notes: box.notes ?? "",
@@ -469,7 +471,47 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
 
     const activeShipmentId = shipmentResult.data.id;
 
-    if (canFullyEditShipment && (!hasPostedItems || isAdmin)) {
+    if (canFullyEditShipment && isAdmin && shipmentId) {
+      const retainedItemIds = preparedLines.map((line) => line.id).filter(Boolean) as string[];
+      let softDeleteQuery = supabase
+        .from("incoming_items")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("shipment_id", activeShipmentId)
+        .is("inventory_posted_at", null);
+
+      if (retainedItemIds.length > 0) {
+        softDeleteQuery = softDeleteQuery.not("id", "in", `(${retainedItemIds.join(",")})`);
+      }
+
+      const { error: softDeleteError } = await softDeleteQuery;
+
+      if (softDeleteError) {
+        setError(softDeleteError.message);
+        setSaving(false);
+        return;
+      }
+
+      for (const line of preparedLines) {
+        const payload = {
+          expected_boxes: 0,
+          expected_quantity: Number(line.expected_quantity),
+          notes: line.notes.trim() || null,
+          product_id: line.product_id,
+        };
+        const result = line.id
+          ? await supabase.from("incoming_items").update(payload).eq("id", line.id)
+          : await supabase.from("incoming_items").insert({
+            ...payload,
+            shipment_id: activeShipmentId,
+          });
+
+        if (result.error) {
+          setError(result.error.message);
+          setSaving(false);
+          return;
+        }
+      }
+    } else if (canFullyEditShipment) {
       const itemDeleteQuery = supabase
         .from("incoming_items")
         .update({ deleted_at: new Date().toISOString() })
@@ -516,35 +558,77 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
     }
 
     if (canEditTrackingLines) {
-      const { error: deleteBoxesError } = await supabase
-        .from("incoming_tracking_boxes")
-        .update({ deleted_at: new Date().toISOString() })
-        .eq("shipment_id", activeShipmentId)
-        .is("inventory_posted_at", null);
-
-      if (deleteBoxesError) {
-        setError(deleteBoxesError.message);
-        setSaving(false);
-        return;
-      }
-
       const validTrackingRows = form.trackingLines.filter((line) => line.tracking_number.trim());
 
-      if (validTrackingRows.length > 0) {
-        const { error: boxesError } = await supabase.from("incoming_tracking_boxes").insert(
-          validTrackingRows.map((line) => ({
-            shipment_id: activeShipmentId,
-            tracking_number: line.tracking_number.trim(),
-            carrier: form.carrier.trim() || null,
-            box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
-            notes: line.notes.trim() || null,
-          })),
-        );
+      if (isAdmin && shipmentId) {
+        const retainedBoxIds = validTrackingRows.map((line) => line.id).filter(Boolean) as string[];
+        let deleteBoxesQuery = supabase
+          .from("incoming_tracking_boxes")
+          .update({ deleted_at: new Date().toISOString() })
+          .eq("shipment_id", activeShipmentId)
+          .is("inventory_posted_at", null);
 
-        if (boxesError) {
-          setError(boxesError.message);
+        if (retainedBoxIds.length > 0) {
+          deleteBoxesQuery = deleteBoxesQuery.not("id", "in", `(${retainedBoxIds.join(",")})`);
+        }
+
+        const { error: deleteBoxesError } = await deleteBoxesQuery;
+
+        if (deleteBoxesError) {
+          setError(deleteBoxesError.message);
           setSaving(false);
           return;
+        }
+
+        for (const line of validTrackingRows) {
+          const payload = {
+            box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
+            carrier: form.carrier.trim() || null,
+            notes: line.notes.trim() || null,
+            tracking_number: line.tracking_number.trim(),
+          };
+          const result = line.id
+            ? await supabase.from("incoming_tracking_boxes").update(payload).eq("id", line.id)
+            : await supabase.from("incoming_tracking_boxes").insert({
+              ...payload,
+              shipment_id: activeShipmentId,
+            });
+
+          if (result.error) {
+            setError(result.error.message);
+            setSaving(false);
+            return;
+          }
+        }
+      } else {
+        const { error: deleteBoxesError } = await supabase
+          .from("incoming_tracking_boxes")
+          .update({ deleted_at: new Date().toISOString() })
+          .eq("shipment_id", activeShipmentId)
+          .is("inventory_posted_at", null);
+
+        if (deleteBoxesError) {
+          setError(deleteBoxesError.message);
+          setSaving(false);
+          return;
+        }
+
+        if (validTrackingRows.length > 0) {
+          const { error: boxesError } = await supabase.from("incoming_tracking_boxes").insert(
+            validTrackingRows.map((line) => ({
+              shipment_id: activeShipmentId,
+              tracking_number: line.tracking_number.trim(),
+              carrier: form.carrier.trim() || null,
+              box_count: line.box_count.trim() === "" ? 1 : Number(line.box_count),
+              notes: line.notes.trim() || null,
+            })),
+          );
+
+          if (boxesError) {
+            setError(boxesError.message);
+            setSaving(false);
+            return;
+          }
         }
       }
     }
@@ -729,7 +813,7 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
 
           <div className="flex gap-2">
             <Button type="submit" disabled={saving || (!isClientPortal && clients.length === 0) || statuses.length === 0}>
-              {saving ? "Saving..." : "Save shipment"}
+              {saving ? "Saving..." : shipmentId ? "Save Changes" : "Save shipment"}
             </Button>
             <Link href="/incoming-shipments" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
               Cancel
