@@ -4,7 +4,8 @@ alter table public.incoming_shipments
 add column if not exists archived_at timestamptz,
 add column if not exists archived_by uuid references auth.users(id) on update cascade on delete set null,
 add column if not exists deleted_by uuid references auth.users(id) on update cascade on delete set null,
-add column if not exists restored_at timestamptz;
+add column if not exists restored_at timestamptz,
+add column if not exists restored_by uuid references auth.users(id) on update cascade on delete set null;
 
 create index if not exists incoming_shipments_active_client_status_idx
 on public.incoming_shipments (client_id, status_id, created_at desc)
@@ -90,9 +91,10 @@ begin
   update public.incoming_shipments
   set
     archived_at = now(),
-    archived_by = auth.uid()
-  where id = p_shipment_id
-    and deleted_at is null;
+    archived_by = auth.uid(),
+    deleted_at = null,
+    deleted_by = null
+  where id = p_shipment_id;
 end;
 $$;
 
@@ -129,9 +131,10 @@ begin
   update public.incoming_shipments
   set
     deleted_at = now(),
-    deleted_by = auth.uid()
-  where id = p_shipment_id
-    and deleted_at is null;
+    deleted_by = auth.uid(),
+    archived_at = null,
+    archived_by = null
+  where id = p_shipment_id;
 end;
 $$;
 
@@ -150,7 +153,8 @@ begin
   set
     archived_at = null,
     deleted_at = null,
-    restored_at = now()
+    restored_at = now(),
+    restored_by = auth.uid()
   where id = p_shipment_id;
 
   if not found then

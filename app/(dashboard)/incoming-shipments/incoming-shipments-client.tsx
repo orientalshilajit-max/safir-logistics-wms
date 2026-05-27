@@ -190,7 +190,7 @@ export function IncomingShipmentsClient({
           const timestamp = new Date().toISOString();
           const { error: directDeleteError } = await supabase
             .from("incoming_shipments")
-            .update({ deleted_at: timestamp })
+            .update({ archived_at: null, deleted_at: timestamp })
             .eq("id", shipment.id);
 
           if (directDeleteError) {
@@ -199,7 +199,7 @@ export function IncomingShipmentsClient({
             setShipments((current) =>
               current.map((currentShipment) =>
                 currentShipment.id === shipment.id
-                  ? { ...currentShipment, deleted_at: timestamp }
+                  ? { ...currentShipment, archived_at: null, deleted_at: timestamp }
                   : currentShipment,
               ),
             );
@@ -212,7 +212,7 @@ export function IncomingShipmentsClient({
         setShipments((current) =>
           current.map((currentShipment) =>
             currentShipment.id === shipment.id
-              ? { ...currentShipment, deleted_at: timestamp }
+              ? { ...currentShipment, archived_at: null, deleted_at: timestamp }
               : currentShipment,
           ),
         );
@@ -239,7 +239,7 @@ export function IncomingShipmentsClient({
       if (archiveError.message.includes("Could not find the function")) {
         const { error: directArchiveError } = await supabase
           .from("incoming_shipments")
-          .update({ archived_at: archivedAt })
+          .update({ archived_at: archivedAt, deleted_at: null })
           .eq("id", shipment.id);
 
         if (directArchiveError) {
@@ -249,7 +249,7 @@ export function IncomingShipmentsClient({
           setShipments((current) =>
             current.map((currentShipment) =>
               currentShipment.id === shipment.id
-                ? { ...currentShipment, archived_at: archivedAt }
+                ? { ...currentShipment, archived_at: archivedAt, deleted_at: null }
                 : currentShipment,
             ),
           );
@@ -262,7 +262,7 @@ export function IncomingShipmentsClient({
       setShipments((current) =>
         current.map((currentShipment) =>
           currentShipment.id === shipment.id
-            ? { ...currentShipment, archived_at: archivedAt }
+            ? { ...currentShipment, archived_at: archivedAt, deleted_at: null }
             : currentShipment,
         ),
       );
@@ -292,7 +292,6 @@ export function IncomingShipmentsClient({
           .update({
             archived_at: null,
             deleted_at: null,
-            restored_at: new Date().toISOString(),
           })
           .eq("id", shipment.id);
 
@@ -303,7 +302,7 @@ export function IncomingShipmentsClient({
           setShipments((current) =>
             current.map((currentShipment) =>
               currentShipment.id === shipment.id
-                ? { ...currentShipment, archived_at: null, deleted_at: null, restored_at: new Date().toISOString() }
+                ? { ...currentShipment, archived_at: null, deleted_at: null }
                 : currentShipment,
             ),
           );
@@ -316,7 +315,7 @@ export function IncomingShipmentsClient({
       setShipments((current) =>
         current.map((currentShipment) =>
           currentShipment.id === shipment.id
-            ? { ...currentShipment, archived_at: null, deleted_at: null, restored_at: new Date().toISOString() }
+            ? { ...currentShipment, archived_at: null, deleted_at: null }
             : currentShipment,
         ),
       );

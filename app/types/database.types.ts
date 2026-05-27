@@ -475,6 +475,7 @@ export type Database = {
           supplier: string | null;
           tracking_numbers: string[];
           restored_at: string | null;
+          restored_by: string | null;
           updated_at: string;
         };
         Insert: {
@@ -495,6 +496,7 @@ export type Database = {
           supplier?: string | null;
           tracking_numbers?: string[];
           restored_at?: string | null;
+          restored_by?: string | null;
           updated_at?: string;
         };
         Update: {
@@ -515,6 +517,7 @@ export type Database = {
           supplier?: string | null;
           tracking_numbers?: string[];
           restored_at?: string | null;
+          restored_by?: string | null;
           updated_at?: string;
         };
         Relationships: [
