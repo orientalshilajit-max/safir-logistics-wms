@@ -88,7 +88,7 @@ export const clientPortalRoutes: DashboardRoute[] = [
     label: "Dashboard",
     eyebrow: "Client Portal",
     title: "My Dashboard",
-    description: "A simplified view of your inventory, inbound shipments, service requests, and invoices.",
+    description: "A simplified view of your products, inbound shipments, service requests, files, and invoices.",
     status: "Live",
   },
   {
@@ -109,26 +109,10 @@ export const clientPortalRoutes: DashboardRoute[] = [
   },
   {
     href: "/requests",
-    label: "Order Service",
+    label: "Service Requests",
     eyebrow: "Client Work",
-    title: "Order Service",
+    title: "Service Requests",
     description: "Create and monitor prep, labeling, packing, and special handling requests.",
-    status: "Live",
-  },
-  {
-    href: "/inventory",
-    label: "Inventory",
-    eyebrow: "Stock",
-    title: "Inventory",
-    description: "View available, reserved, incoming, and in-process inventory.",
-    status: "Live",
-  },
-  {
-    href: "/invoices",
-    label: "Invoices",
-    eyebrow: "Billing",
-    title: "Invoices",
-    description: "Review generated invoices and payment status.",
     status: "Live",
   },
   {
@@ -137,6 +121,14 @@ export const clientPortalRoutes: DashboardRoute[] = [
     eyebrow: "Files",
     title: "Files & Documents",
     description: "Upload and review files shared with your prep center account.",
+    status: "Live",
+  },
+  {
+    href: "/invoices",
+    label: "Invoices",
+    eyebrow: "Billing",
+    title: "Invoices",
+    description: "Review generated invoices and payment status.",
     status: "Live",
   },
 ];

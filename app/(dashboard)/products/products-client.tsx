@@ -14,9 +14,14 @@ type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products"> & {
   clients: Client | null;
 };
-type ProductHistoryRow = {
+type ProductInventoryRow = {
   product_id: string;
+  expected_qty: number;
+  received_qty: number;
+  available_qty: number;
+  damaged_qty: number;
 };
+type ProductHistoryRow = { product_id: string };
 
 type StatusFilter = "active" | "archived" | "deleted" | "all";
 type DateFilter = "all" | "today" | "week" | "month" | "year";
@@ -28,7 +33,7 @@ export function ProductsClient() {
   const isAdmin = role === "admin";
   const [products, setProducts] = useState<Product[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [inventoryHistory, setInventoryHistory] = useState<ProductHistoryRow[]>([]);
+  const [inventoryRows, setInventoryRows] = useState<ProductInventoryRow[]>([]);
   const [incomingHistory, setIncomingHistory] = useState<ProductHistoryRow[]>([]);
   const [requestHistory, setRequestHistory] = useState<ProductHistoryRow[]>([]);
   const [query, setQuery] = useState("");
@@ -47,7 +52,7 @@ export function ProductsClient() {
     if (isClientPortal && !clientId) {
       setProducts([]);
       setClients([]);
-      setInventoryHistory([]);
+      setInventoryRows([]);
       setIncomingHistory([]);
       setRequestHistory([]);
       setError(CLIENT_ACCOUNT_LINK_ERROR);
@@ -63,7 +68,7 @@ export function ProductsClient() {
 
     let inventoryQuery = supabase
       .from("inventory")
-      .select("product_id")
+      .select("product_id, expected_qty, received_qty, available_qty, damaged_qty")
       .is("deleted_at", null);
 
     let incomingQuery = supabase
@@ -109,7 +114,7 @@ export function ProductsClient() {
 
     setProducts((productsResult.data ?? []) as Product[]);
     setClients((clientsResult.data ?? []) as Client[]);
-    setInventoryHistory((inventoryResult.data ?? []) as ProductHistoryRow[]);
+    setInventoryRows((inventoryResult.data ?? []) as ProductInventoryRow[]);
     setIncomingHistory((incomingResult.data ?? []) as ProductHistoryRow[]);
     setRequestHistory((requestResult.data ?? []) as ProductHistoryRow[]);
     setLoading(false);
@@ -134,11 +139,15 @@ export function ProductsClient() {
 
   const historyProductIds = useMemo(() => {
     return new Set([
-      ...inventoryHistory.map((row) => row.product_id),
+      ...inventoryRows.map((row) => row.product_id),
       ...incomingHistory.map((row) => row.product_id),
       ...requestHistory.map((row) => row.product_id),
     ]);
-  }, [incomingHistory, inventoryHistory, requestHistory]);
+  }, [incomingHistory, inventoryRows, requestHistory]);
+
+  const inventoryByProductId = useMemo(() => {
+    return new Map(inventoryRows.map((row) => [row.product_id, row]));
+  }, [inventoryRows]);
 
   const filteredProducts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -178,8 +187,8 @@ export function ProductsClient() {
 
     const productIds = new Set(products.map((product) => product.id));
 
-    return Array.from(new Set(inventoryHistory.map((row) => row.product_id))).filter((productId) => !productIds.has(productId));
-  }, [inventoryHistory, isAdmin, products]);
+    return Array.from(new Set(inventoryRows.map((row) => row.product_id))).filter((productId) => !productIds.has(productId));
+  }, [inventoryRows, isAdmin, products]);
 
   async function handleArchiveDelete(product: Product) {
     setError(null);
@@ -417,70 +426,88 @@ export function ProductsClient() {
             <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="w-[7%] px-3 py-2 font-semibold">Image</th>
-                <th className={isAdmin ? "w-[18%] px-2 py-2 font-semibold" : "w-[27%] px-2 py-2 font-semibold"}>Product Name</th>
+                <th className={isAdmin ? "w-[18%] px-2 py-2 font-semibold" : "w-[22%] px-2 py-2 font-semibold"}>Product Name</th>
                 {isAdmin ? <th className="w-[13%] px-2 py-2 font-semibold">Client</th> : null}
                 <th className="w-[10%] px-2 py-2 font-semibold">SKU</th>
                 <th className="w-[12%] px-2 py-2 font-semibold">ASIN / UPC</th>
                 <th className="w-[10%] px-2 py-2 font-semibold">FNSKU</th>
+                {isClientPortal ? (
+                  <>
+                    <th className="w-[8%] px-2 py-2 font-semibold">Available</th>
+                    <th className="w-[8%] px-2 py-2 font-semibold">Incoming</th>
+                    <th className="w-[8%] px-2 py-2 font-semibold">Damaged</th>
+                  </>
+                ) : null}
                 <th className="w-[8%] px-2 py-2 font-semibold">Status</th>
-                <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th>
+                {isAdmin ? <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th> : null}
                 <th className="w-[12%] px-2 py-2 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {filteredProducts.map((product) => (
-                <tr key={product.id} className="transition hover:bg-slate-50">
-                  <td className="px-3 py-2.5">
-                    <ProductThumb product={product} />
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <p className="line-clamp-2 text-sm font-medium leading-5 text-slate-950">{product.product_name}</p>
-                  </td>
-                  {isAdmin ? <td className="px-2 py-2.5 text-xs text-slate-600">{product.clients?.company_name ?? "Unknown client"}</td> : null}
-                  <td className="px-2 py-2.5 text-xs text-slate-600">{product.sku ?? "-"}</td>
-                  <td className="px-2 py-2.5 text-xs text-slate-600">{formatAsinUpc(product)}</td>
-                  <td className="px-2 py-2.5 text-xs text-slate-600">{product.fnsku ?? "-"}</td>
-                  <td className="px-2 py-2.5">
-                    <StatusBadge tone={product.deleted_at ? "rose" : product.active ? "emerald" : "slate"}>{product.deleted_at ? "Deleted" : product.active ? "Active" : "Archived"}</StatusBadge>
-                  </td>
-                  <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td>
-                  <td className="px-2 py-2.5">
-                    <div className="flex justify-end gap-1">
-                      <TableActionButton
-                        title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move up"}
-                        aria-label={`Move ${product.product_name} up`}
-                        disabled={!canMoveProduct(product, "up")}
-                        onClick={() => void moveProduct(product, "up")}
-                      >
-                        <MoveUpIcon />
-                      </TableActionButton>
-                      <TableActionButton
-                        title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move down"}
-                        aria-label={`Move ${product.product_name} down`}
-                        disabled={!canMoveProduct(product, "down")}
-                        onClick={() => void moveProduct(product, "down")}
-                      >
-                        <MoveDownIcon />
-                      </TableActionButton>
-                      <TableActionLink
-                        href={`/products/${product.id}/edit`}
-                        title="Edit product"
-                        aria-label={`Edit ${product.product_name}`}
-                      >
-                        <PencilIcon />
-                      </TableActionLink>
-                      <TableActionButton
-                        title={getProductActionLabel(product, historyProductIds)}
-                        aria-label={`${getProductActionLabel(product, historyProductIds)} ${product.product_name}`}
-                        tone={product.active && !product.deleted_at && !historyProductIds.has(product.id) ? "danger" : "neutral"}
-                        onClick={() => void handleArchiveDelete(product)}
-                      >
-                        {product.active && !historyProductIds.has(product.id) ? <TrashIcon /> : <ArchiveIcon />}
-                      </TableActionButton>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filteredProducts.map((product) => {
+                const stock = getProductStockSummary(inventoryByProductId.get(product.id));
+
+                return (
+                  <tr key={product.id} className="transition hover:bg-slate-50">
+                    <td className="px-3 py-2.5">
+                      <ProductThumb product={product} />
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <p className="line-clamp-2 text-sm font-medium leading-5 text-slate-950">{product.product_name}</p>
+                    </td>
+                    {isAdmin ? <td className="px-2 py-2.5 text-xs text-slate-600">{product.clients?.company_name ?? "Unknown client"}</td> : null}
+                    <td className="px-2 py-2.5 text-xs text-slate-600">{product.sku ?? "-"}</td>
+                    <td className="px-2 py-2.5 text-xs text-slate-600">{formatAsinUpc(product)}</td>
+                    <td className="px-2 py-2.5 text-xs text-slate-600">{product.fnsku ?? "-"}</td>
+                    {isClientPortal ? (
+                      <>
+                        <td className="px-2 py-2.5 text-xs font-semibold tabular-nums text-emerald-700">{stock.available}</td>
+                        <td className="px-2 py-2.5 text-xs tabular-nums text-blue-700">{stock.incoming}</td>
+                        <td className="px-2 py-2.5 text-xs tabular-nums text-rose-700">{stock.damaged}</td>
+                      </>
+                    ) : null}
+                    <td className="px-2 py-2.5">
+                      <StatusBadge tone={product.deleted_at ? "rose" : product.active ? "emerald" : "slate"}>{product.deleted_at ? "Deleted" : product.active ? "Active" : "Archived"}</StatusBadge>
+                    </td>
+                    {isAdmin ? <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td> : null}
+                    <td className="px-2 py-2.5">
+                      <div className="flex justify-end gap-1">
+                        <TableActionButton
+                          title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move up"}
+                          aria-label={`Move ${product.product_name} up`}
+                          disabled={!canMoveProduct(product, "up")}
+                          onClick={() => void moveProduct(product, "up")}
+                        >
+                          <MoveUpIcon />
+                        </TableActionButton>
+                        <TableActionButton
+                          title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move down"}
+                          aria-label={`Move ${product.product_name} down`}
+                          disabled={!canMoveProduct(product, "down")}
+                          onClick={() => void moveProduct(product, "down")}
+                        >
+                          <MoveDownIcon />
+                        </TableActionButton>
+                        <TableActionLink
+                          href={`/products/${product.id}/edit`}
+                          title="Edit product"
+                          aria-label={`Edit ${product.product_name}`}
+                        >
+                          <PencilIcon />
+                        </TableActionLink>
+                        <TableActionButton
+                          title={getProductActionLabel(product, historyProductIds)}
+                          aria-label={`${getProductActionLabel(product, historyProductIds)} ${product.product_name}`}
+                          tone={product.active && !product.deleted_at && !historyProductIds.has(product.id) ? "danger" : "neutral"}
+                          onClick={() => void handleArchiveDelete(product)}
+                        >
+                          {product.active && !historyProductIds.has(product.id) ? <TrashIcon /> : <ArchiveIcon />}
+                        </TableActionButton>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -588,6 +615,18 @@ function getProductStatusLabel(product: Product) {
 function getProductActionLabel(product: Product, historyProductIds: Set<string>) {
   if (product.deleted_at || !product.active) return "Restore product";
   return historyProductIds.has(product.id) ? "Archive product" : "Delete product";
+}
+
+function getProductStockSummary(row: ProductInventoryRow | undefined) {
+  if (!row) {
+    return { available: 0, incoming: 0, damaged: 0 };
+  }
+
+  return {
+    available: row.available_qty,
+    incoming: Math.max(row.expected_qty - row.received_qty, 0),
+    damaged: row.damaged_qty,
+  };
 }
 
 function isWithinDateFilter(value: string, filter: DateFilter) {
