@@ -18,7 +18,7 @@ import {
 import { SlidersIcon, TableActionButton } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
-type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "asin" | "barcode" | "photo_url">;
+type Product = Pick<Tables<"products">, "id" | "product_name" | "sku" | "fnsku" | "asin" | "barcode" | "photo_url" | "sort_order">;
 type InventoryRow = Tables<"inventory"> & {
   clients: Client | null;
   products: Product | null;
@@ -30,7 +30,7 @@ type InventoryEditForm = {
   received_qty: string;
   shipped_qty: string;
 };
-type AdminSortOption = "newest" | "oldest" | "customer_az" | "customer_za" | "quantity_high" | "quantity_low";
+type AdminSortOption = "product_order" | "newest" | "oldest" | "customer_az" | "customer_za" | "quantity_high" | "quantity_low";
 
 export function InventoryClient() {
   const { role, clientId } = useAuth();
@@ -47,7 +47,7 @@ export function InventoryClient() {
   const [stockFilter, setStockFilter] = useState<"all" | "available" | "damaged">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [productFilter, setProductFilter] = useState("all");
-  const [adminSort, setAdminSort] = useState<AdminSortOption>("newest");
+  const [adminSort, setAdminSort] = useState<AdminSortOption>("product_order");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,32 +97,42 @@ export function InventoryClient() {
   const clientFilteredRows = useMemo(() => {
     const normalized = searchQuery.trim().toLowerCase();
 
-    return rows.filter((row) => {
-      const productName = row.products?.product_name ?? "";
-      const sku = row.products?.sku ?? "";
-      const asin = row.products?.asin ?? "";
-      const barcode = row.products?.barcode ?? "";
-      const matchesSearch =
-        !normalized ||
-        productName.toLowerCase().includes(normalized) ||
-        sku.toLowerCase().includes(normalized) ||
-        asin.toLowerCase().includes(normalized) ||
-        barcode.toLowerCase().includes(normalized);
-      const matchesProduct = productFilter === "all" || row.product_id === productFilter;
-      const matchesStock =
-        stockFilter === "all" ||
-        (stockFilter === "available" && row.available_qty > 0) ||
-        (stockFilter === "damaged" && row.damaged_qty > 0);
+    return rows
+      .filter((row) => {
+        const productName = row.products?.product_name ?? "";
+        const sku = row.products?.sku ?? "";
+        const asin = row.products?.asin ?? "";
+        const barcode = row.products?.barcode ?? "";
+        const matchesSearch =
+          !normalized ||
+          productName.toLowerCase().includes(normalized) ||
+          sku.toLowerCase().includes(normalized) ||
+          asin.toLowerCase().includes(normalized) ||
+          barcode.toLowerCase().includes(normalized);
+        const matchesProduct = productFilter === "all" || row.product_id === productFilter;
+        const matchesStock =
+          stockFilter === "all" ||
+          (stockFilter === "available" && row.available_qty > 0) ||
+          (stockFilter === "damaged" && row.damaged_qty > 0);
 
-      return matchesSearch && matchesProduct && matchesStock;
-    });
+        return matchesSearch && matchesProduct && matchesStock;
+      })
+      .sort(compareInventoryRowsByProductOrder);
   }, [productFilter, rows, searchQuery, stockFilter]);
   const productOptions = useMemo(
     () =>
       rows
-        .map((row) => ({ id: row.product_id, name: row.products?.product_name ?? "Unknown product" }))
+        .map((row) => ({
+          id: row.product_id,
+          name: row.products?.product_name ?? "Unknown product",
+          sortOrder: row.products?.sort_order ?? 0,
+        }))
         .filter((item, index, list) => list.findIndex((option) => option.id === item.id) === index)
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        .sort((a, b) => {
+          const orderDifference = a.sortOrder - b.sortOrder;
+          if (orderDifference !== 0) return orderDifference;
+          return a.name.localeCompare(b.name);
+        }),
     [rows],
   );
   const unresolvedProductRows = useMemo(
@@ -143,7 +153,7 @@ export function InventoryClient() {
 
     const query = supabase
       .from("inventory")
-      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin, barcode, photo_url)")
+      .select("*, clients(id, company_name), products!inventory_product_id_fkey(id, product_name, sku, fnsku, asin, barcode, photo_url, sort_order)")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false });
 
@@ -348,6 +358,7 @@ export function InventoryClient() {
           <label className="grid gap-1 text-xs font-medium text-slate-600">
             Sort by
             <select className={inputClassName} value={adminSort} onChange={(event) => setAdminSort(event.target.value as AdminSortOption)}>
+              <option value="product_order">Manual product order</option>
               <option value="newest">Date: Newest first</option>
               <option value="oldest">Date: Oldest first</option>
               <option value="customer_az">Customer: A-Z</option>
@@ -534,6 +545,10 @@ function getIncomingUnits(row: InventoryRow) {
 }
 
 function compareInventoryRows(left: InventoryRow, right: InventoryRow, sort: AdminSortOption) {
+  if (sort === "product_order") {
+    return compareInventoryRowsByProductOrder(left, right);
+  }
+
   if (sort === "oldest") {
     return new Date(left.updated_at).getTime() - new Date(right.updated_at).getTime();
   }
@@ -549,6 +564,16 @@ function compareInventoryRows(left: InventoryRow, right: InventoryRow, sort: Adm
   }
 
   return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+}
+
+function compareInventoryRowsByProductOrder(left: InventoryRow, right: InventoryRow) {
+  const clientDifference = (left.clients?.company_name ?? "").localeCompare(right.clients?.company_name ?? "");
+  if (clientDifference !== 0) return clientDifference;
+
+  const orderDifference = (left.products?.sort_order ?? 0) - (right.products?.sort_order ?? 0);
+  if (orderDifference !== 0) return orderDifference;
+
+  return (left.products?.product_name ?? "").localeCompare(right.products?.product_name ?? "");
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

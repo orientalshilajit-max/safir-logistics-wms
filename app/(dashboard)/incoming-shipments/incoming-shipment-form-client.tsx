@@ -510,6 +510,14 @@ export function IncomingShipmentFormClient({ shipmentId }: { shipmentId?: string
         setSaving(false);
         return;
       }
+
+      const selectedProduct = products.find((product) => product.id === line.product_id);
+
+      if (!selectedProduct || selectedProduct.client_id !== form.client_id) {
+        setError("Selected products must belong to the shipment client.");
+        setSaving(false);
+        return;
+      }
     }
 
     const duplicateProduct = findDuplicateProduct(preparedLines);

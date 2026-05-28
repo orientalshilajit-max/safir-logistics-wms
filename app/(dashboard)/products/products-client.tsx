@@ -254,6 +254,82 @@ export function ProductsClient() {
     await loadData();
   }
 
+  function getOrderableProducts(product: Product) {
+    return products
+      .filter((item) => item.client_id === product.client_id && !item.deleted_at)
+      .sort(compareProductsByManualOrder);
+  }
+
+  function canMoveProduct(product: Product, direction: "up" | "down") {
+    if (product.deleted_at) return false;
+    if (isClientPortal && product.client_id !== clientId) return false;
+    if (isAdmin && clientFilter !== product.client_id) return false;
+
+    const siblings = getOrderableProducts(product);
+    const index = siblings.findIndex((item) => item.id === product.id);
+    if (index === -1) return false;
+
+    return direction === "up" ? index > 0 : index < siblings.length - 1;
+  }
+
+  async function moveProduct(product: Product, direction: "up" | "down") {
+    setError(null);
+    setSuccess(null);
+
+    if (isClientPortal && product.client_id !== clientId) {
+      setError(CLIENT_ACCOUNT_LINK_ERROR);
+      return;
+    }
+
+    if (isAdmin && clientFilter !== product.client_id) {
+      setError("Select this product's client before reordering products.");
+      return;
+    }
+
+    const siblings = getOrderableProducts(product);
+    const currentIndex = siblings.findIndex((item) => item.id === product.id);
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    const targetProduct = siblings[targetIndex];
+
+    if (currentIndex === -1 || !targetProduct) {
+      return;
+    }
+
+    const nextOrders = new Map(siblings.map((item, index) => [item.id, index + 1]));
+    const currentOrder = nextOrders.get(product.id);
+    const targetOrder = nextOrders.get(targetProduct.id);
+
+    if (!currentOrder || !targetOrder) {
+      return;
+    }
+
+    nextOrders.set(product.id, targetOrder);
+    nextOrders.set(targetProduct.id, currentOrder);
+
+    const updates = siblings
+      .map((item) => ({ id: item.id, sort_order: nextOrders.get(item.id) ?? item.sort_order }))
+      .filter((item) => item.sort_order !== siblings.find((productItem) => productItem.id === item.id)?.sort_order);
+
+    const results = await Promise.all(
+      updates.map((item) =>
+        supabase
+          .from("products")
+          .update({ sort_order: item.sort_order })
+          .eq("id", item.id)
+          .eq("client_id", product.client_id),
+      ),
+    );
+    const updateError = results.find((result) => result.error)?.error;
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+
+    setSuccess("Product order updated.");
+    await loadData();
+  }
+
   if (loading) {
     return <LoadingState label="Loading products..." />;
   }
@@ -341,14 +417,14 @@ export function ProductsClient() {
             <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="w-[7%] px-3 py-2 font-semibold">Image</th>
-                <th className={isAdmin ? "w-[22%] px-2 py-2 font-semibold" : "w-[31%] px-2 py-2 font-semibold"}>Product Name</th>
-                {isAdmin ? <th className="w-[15%] px-2 py-2 font-semibold">Client</th> : null}
+                <th className={isAdmin ? "w-[18%] px-2 py-2 font-semibold" : "w-[27%] px-2 py-2 font-semibold"}>Product Name</th>
+                {isAdmin ? <th className="w-[13%] px-2 py-2 font-semibold">Client</th> : null}
                 <th className="w-[10%] px-2 py-2 font-semibold">SKU</th>
                 <th className="w-[12%] px-2 py-2 font-semibold">ASIN / UPC</th>
                 <th className="w-[10%] px-2 py-2 font-semibold">FNSKU</th>
                 <th className="w-[8%] px-2 py-2 font-semibold">Status</th>
                 <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th>
-                <th className="w-[8%] px-2 py-2 text-right font-semibold">Actions</th>
+                <th className="w-[12%] px-2 py-2 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -370,6 +446,22 @@ export function ProductsClient() {
                   <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td>
                   <td className="px-2 py-2.5">
                     <div className="flex justify-end gap-1">
+                      <TableActionButton
+                        title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move up"}
+                        aria-label={`Move ${product.product_name} up`}
+                        disabled={!canMoveProduct(product, "up")}
+                        onClick={() => void moveProduct(product, "up")}
+                      >
+                        <MoveUpIcon />
+                      </TableActionButton>
+                      <TableActionButton
+                        title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move down"}
+                        aria-label={`Move ${product.product_name} down`}
+                        disabled={!canMoveProduct(product, "down")}
+                        onClick={() => void moveProduct(product, "down")}
+                      >
+                        <MoveDownIcon />
+                      </TableActionButton>
                       <TableActionLink
                         href={`/products/${product.id}/edit`}
                         title="Edit product"
@@ -481,6 +573,13 @@ function compareProductsForDisplay(left: Product, right: Product, sortFilter: So
   return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
 }
 
+function compareProductsByManualOrder(left: Product, right: Product) {
+  const orderDifference = (left.sort_order ?? 0) - (right.sort_order ?? 0);
+  if (orderDifference !== 0) return orderDifference;
+
+  return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+}
+
 function getProductStatusLabel(product: Product) {
   if (product.deleted_at) return "Deleted";
   return product.active ? "Active" : "Archived";
@@ -550,6 +649,22 @@ function SearchIcon() {
     <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MoveUpIcon() {
+  return (
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m6 15 6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MoveDownIcon() {
+  return (
+    <svg aria-hidden="true" className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
