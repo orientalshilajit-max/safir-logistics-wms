@@ -8,7 +8,6 @@ import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
 import {
-  Button,
   EmptyState,
   ErrorBanner,
   inputClassName,
@@ -57,9 +56,7 @@ export function DocumentsClient() {
   const [folderFilter, setFolderFilter] = useState("All Files");
   const [previewDocument, setPreviewDocument] = useState<DocumentFile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -196,91 +193,19 @@ export function DocumentsClient() {
     });
   }, [clientId, dateFilter, fileQuery, fileTypeFilter, filteredDocuments, folderFilter, user?.id]);
 
-  async function archiveDocument(document: DocumentFile) {
-    if (!window.confirm(`Archive ${document.file_name}?`)) {
-      return;
-    }
+  useEffect(() => {
+    if (!previewDocument) return;
 
-    setUpdatingId(document.id);
-    setError(null);
-    setMessage(null);
-
-    const { error: archiveError } = await supabase
-      .from("attachments")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("id", document.id);
-
-    if (archiveError) {
-      setError(archiveError.message);
-    } else {
-      setMessage("File archived.");
-      if (previewDocument?.id === document.id) {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
         setPreviewDocument(null);
       }
-      await loadDocuments();
     }
 
-    setUpdatingId(null);
-  }
+    window.addEventListener("keydown", handleKeyDown);
 
-  async function toggleVisibility(document: DocumentFile) {
-    setUpdatingId(document.id);
-    setError(null);
-    setMessage(null);
-
-    const { error: updateError } = await supabase
-      .from("attachments")
-      .update({ visible_to_client: !document.visible_to_client })
-      .eq("id", document.id);
-
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      setMessage(document.visible_to_client ? "File marked internal only." : "File marked visible to client.");
-      await loadDocuments();
-    }
-
-    setUpdatingId(null);
-  }
-
-  function openPrintView(document: DocumentFile) {
-    const url = document.preview_url ?? document.file_url;
-    const popup = window.open("", "_blank", "noopener,noreferrer");
-
-    if (!popup) {
-      window.open(url, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    const escapedUrl = escapeHtml(url);
-    const escapedName = escapeHtml(document.file_name);
-    popup.document.write(`
-      <!doctype html>
-      <html>
-        <head>
-          <title>${escapedName}</title>
-          <style>
-            body { margin: 0; font-family: Arial, sans-serif; background: #fff; }
-            .toolbar { padding: 12px; border-bottom: 1px solid #e2e8f0; }
-            button { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font-weight: 600; }
-            iframe { display: block; width: 100vw; height: calc(100vh - 58px); border: 0; }
-            @media print { .toolbar { display: none; } iframe { height: 100vh; } }
-          </style>
-        </head>
-        <body>
-          <div class="toolbar"><button onclick="window.print()">Print</button></div>
-          <iframe src="${escapedUrl}" title="${escapedName}"></iframe>
-        </body>
-      </html>
-    `);
-    popup.document.close();
-  }
-
-  const selectedPreviewUrl = previewDocument?.preview_url ?? previewDocument?.file_url ?? null;
-  const selectedPreviewMime = previewDocument?.mime_type ?? "";
-  const canPreviewSelected =
-    Boolean(selectedPreviewUrl) &&
-    (selectedPreviewMime.includes("pdf") || selectedPreviewMime.startsWith("image/"));
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewDocument]);
 
   if (!isAdmin) {
     const folderNames = [
@@ -300,11 +225,6 @@ export function DocumentsClient() {
     return (
       <div className="space-y-5">
         <ErrorBanner message={error} />
-        {message ? (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-            {message}
-          </div>
-        ) : null}
 
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Files & Documents</h2>
@@ -399,25 +319,14 @@ export function DocumentsClient() {
                     {clientDocuments.map((document) => (
                       <tr key={document.id} className="hover:bg-slate-50">
                         <td className={`${tableCellClassName} max-w-sm font-medium text-slate-950`}>
-                          <FilePreviewCell document={document} />
+                          <FilePreviewCell document={document} onPreview={setPreviewDocument} />
                         </td>
                         <td className={`${tableCellClassName} text-slate-600`}>{documentFolder(document)}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{getFileType(document).toUpperCase()}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{formatRole(document.uploaded_by_role)}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{formatDate(document.created_at)}</td>
                         <td className={tableCellClassName}>
-                          <div className="flex flex-wrap gap-2">
-                            <a
-                              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                              href={document.preview_url ?? document.file_url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Open
-                            </a>
-                            <Button type="button" variant="secondary" onClick={() => openPrintView(document)}>
-                              Preview
-                            </Button>
+                          <div className="flex flex-wrap gap-1.5">
                             <a
                               className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                               href={document.preview_url ?? document.file_url}
@@ -435,6 +344,7 @@ export function DocumentsClient() {
             )}
           </Panel>
         </div>
+        <FilePreviewModal document={previewDocument} onClose={() => setPreviewDocument(null)} />
       </div>
     );
   }
@@ -442,14 +352,9 @@ export function DocumentsClient() {
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
-      {message ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-          {message}
-        </div>
-      ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="flex items-center justify-between gap-3 xl:col-span-2">
+      <div className="grid gap-5">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Documents & Files</h2>
           <Link
             href="/documents/new"
@@ -459,7 +364,7 @@ export function DocumentsClient() {
             Add Document
           </Link>
         </div>
-        <section className="grid gap-4 sm:grid-cols-2 xl:col-span-2 xl:grid-cols-4">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <FileMetric label="Total Files" value={documents.length} sublabel="All files" />
           <FileMetric label="Global Files" value={documents.filter((document) => document.file_scope === "global").length} sublabel="Shared" />
           <FileMetric label="Client Files" value={documents.filter((document) => document.file_scope === "client_specific").length} sublabel="Client-specific" />
@@ -569,7 +474,7 @@ export function DocumentsClient() {
                   {filteredDocuments.map((document) => (
                     <tr key={document.id} className="hover:bg-slate-50">
                       <td className={`${tableCellClassName} max-w-sm font-medium text-slate-950`}>
-                        <FilePreviewCell document={document} />
+                        <FilePreviewCell document={document} onPreview={setPreviewDocument} />
                       </td>
                       <td className={`${tableCellClassName} text-slate-600`}>
                         <div className="space-y-1">
@@ -593,28 +498,6 @@ export function DocumentsClient() {
                       </td>
                       <td className={tableCellClassName}>
                         <div className="flex flex-wrap gap-1.5">
-                          <Button type="button" variant="secondary" className="size-8 px-0" onClick={() => setPreviewDocument(document)}>
-                            P
-                          </Button>
-                          {isAdmin || (document.file_scope === "client_specific" && document.uploaded_by_user_id === user?.id) ? (
-                            <Link
-                              href={`/documents/${document.id}/edit`}
-                              className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
-                            >
-                              E
-                            </Link>
-                          ) : null}
-                          <a
-                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
-                            href={document.preview_url ?? document.file_url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            O
-                          </a>
-                          <Button type="button" variant="secondary" className="size-8 px-0" onClick={() => openPrintView(document)}>
-                            Pr
-                          </Button>
                           <a
                             className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
                             href={document.preview_url ?? document.file_url}
@@ -623,16 +506,6 @@ export function DocumentsClient() {
                           >
                             D
                           </a>
-                          {isAdmin ? (
-                            <>
-                              <Button type="button" variant="secondary" className="size-8 px-0" disabled={updatingId === document.id} onClick={() => void toggleVisibility(document)}>
-                                {document.visible_to_client ? "I" : "V"}
-                              </Button>
-                              <Button type="button" variant="danger" className="size-8 px-0" disabled={updatingId === document.id} onClick={() => void archiveDocument(document)}>
-                                A
-                              </Button>
-                            </>
-                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -642,44 +515,8 @@ export function DocumentsClient() {
             </div>
           )}
         </Panel>
-
-        <Panel title="Preview" description="PDF and image files preview in place when supported.">
-          {!previewDocument ? (
-            <EmptyState title="No file selected" body="Choose Preview on a file row to inspect it here." />
-          ) : canPreviewSelected && selectedPreviewUrl ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="truncate text-sm font-semibold text-slate-950">{previewDocument.file_name}</p>
-                <Button type="button" variant="secondary" onClick={() => openPrintView(previewDocument)}>
-                  Print view
-                </Button>
-              </div>
-              <iframe
-                className="h-[28rem] w-full rounded-md border border-slate-200 bg-white"
-                src={selectedPreviewUrl}
-                title={previewDocument.file_name}
-              />
-            </div>
-          ) : (
-            <EmptyState
-              title="Preview unavailable"
-              body="This file type can be opened in a new tab."
-              action={
-                selectedPreviewUrl ? (
-                  <a
-                    className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                    href={selectedPreviewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open file
-                  </a>
-                ) : null
-              }
-            />
-          )}
-        </Panel>
       </div>
+      <FilePreviewModal document={previewDocument} onClose={() => setPreviewDocument(null)} />
     </div>
   );
 }
@@ -733,15 +570,20 @@ function FileMetric({
   );
 }
 
-function FilePreviewCell({ document }: { document: DocumentFile }) {
+function FilePreviewCell({
+  document,
+  onPreview,
+}: {
+  document: DocumentFile;
+  onPreview: (document: DocumentFile) => void;
+}) {
   const type = getFileType(document);
-  const url = document.preview_url ?? document.file_url;
 
   return (
     <button
       type="button"
       className="group flex min-w-0 items-center gap-3 text-left"
-      onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+      onClick={() => onPreview(document)}
     >
       <FileThumbnail document={document} type={type} />
       <span className="min-w-0">
@@ -751,6 +593,96 @@ function FilePreviewCell({ document }: { document: DocumentFile }) {
         </span>
       </span>
     </button>
+  );
+}
+
+function FilePreviewModal({
+  document,
+  onClose,
+}: {
+  document: DocumentFile | null;
+  onClose: () => void;
+}) {
+  if (!document) return null;
+
+  const url = document.preview_url ?? document.file_url;
+  const isImage = isImageFile(document);
+  const isPdf = getFileType(document) === "pdf" || document.mime_type?.includes("pdf");
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Preview ${document.file_name}`}
+      onMouseDown={onClose}
+    >
+      <div
+        className="relative flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-950">{document.file_name}</p>
+            <p className="mt-0.5 truncate text-xs text-slate-500">{formatFileMeta(document)}</p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-xl leading-none text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+            aria-label="Close preview"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="flex min-h-[18rem] flex-1 items-center justify-center bg-slate-100 p-4">
+          {isImage ? (
+            <div className="relative h-[72vh] max-h-[72vh] w-full">
+              <Image
+                alt={document.file_name}
+                className="object-contain"
+                fill
+                sizes="100vw"
+                src={url}
+                unoptimized
+              />
+            </div>
+          ) : isPdf ? (
+            <iframe
+              className="h-[72vh] w-full rounded-md border border-slate-200 bg-white"
+              src={url}
+              title={document.file_name}
+            />
+          ) : (
+            <div className="flex max-w-md flex-col items-center gap-4 rounded-lg bg-white p-8 text-center shadow-sm">
+              <FileIcon type={getFileType(document)} large />
+              <div>
+                <p className="text-sm font-semibold text-slate-950">{document.file_name}</p>
+                <p className="mt-1 text-sm text-slate-500">Preview is not available for this file type.</p>
+              </div>
+              <a
+                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                href={url}
+                download={document.file_name}
+              >
+                Download
+              </a>
+            </div>
+          )}
+        </div>
+        {(isImage || isPdf) ? (
+          <div className="flex justify-end border-t border-slate-200 px-4 py-3">
+            <a
+              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              href={url}
+              download={document.file_name}
+            >
+              Download
+            </a>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -876,12 +808,4 @@ function formatRelated(document: DocumentFile) {
   }
 
   return "-";
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
