@@ -1,5 +1,5 @@
-import { InventoryClient } from "@/app/(dashboard)/inventory/inventory-client";
+import { redirect } from "next/navigation";
 
 export default function InventoryPage() {
-  return <InventoryClient />;
+  redirect("/products");
 }

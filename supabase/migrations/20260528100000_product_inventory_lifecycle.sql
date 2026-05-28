@@ -634,6 +634,35 @@ begin
 end;
 $$;
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'inventory_adjustments'
+      and constraint_name = 'inventory_adjustments_type_check'
+  ) then
+    alter table public.inventory_adjustments
+    drop constraint inventory_adjustments_type_check;
+  end if;
+
+  alter table public.inventory_adjustments
+  add constraint inventory_adjustments_type_check
+  check (
+    adjustment_type in (
+      'received_qty',
+      'expected_qty',
+      'reserved_qty',
+      'available_qty',
+      'damaged_qty',
+      'shipped_qty',
+      'storage_boxes'
+    )
+  );
+end;
+$$;
+
 create or replace function public.adjust_inventory_with_audit(
   p_product_id uuid,
   p_client_id uuid,
@@ -665,7 +694,7 @@ begin
     raise exception 'Adjustment reason is required';
   end if;
 
-  if p_adjustment_type not in ('received_qty', 'expected_qty', 'reserved_qty', 'available_qty', 'storage_boxes') then
+  if p_adjustment_type not in ('received_qty', 'expected_qty', 'reserved_qty', 'available_qty', 'damaged_qty', 'shipped_qty', 'storage_boxes') then
     raise exception 'Unsupported adjustment type %', p_adjustment_type;
   end if;
 
@@ -702,6 +731,8 @@ begin
     when 'expected_qty' then inventory_record.expected_qty
     when 'reserved_qty' then inventory_record.reserved_qty
     when 'available_qty' then inventory_record.available_qty
+    when 'damaged_qty' then inventory_record.damaged_qty
+    when 'shipped_qty' then inventory_record.shipped_qty
     when 'storage_boxes' then inventory_record.storage_boxes
   end;
   next_value := previous_value + p_quantity;
@@ -716,6 +747,8 @@ begin
     expected_qty = case when p_adjustment_type = 'expected_qty' then next_value else expected_qty end,
     reserved_qty = case when p_adjustment_type = 'reserved_qty' then next_value else reserved_qty end,
     available_qty = case when p_adjustment_type = 'available_qty' then next_value else available_qty end,
+    damaged_qty = case when p_adjustment_type = 'damaged_qty' then next_value else damaged_qty end,
+    shipped_qty = case when p_adjustment_type = 'shipped_qty' then next_value else shipped_qty end,
     storage_boxes = case when p_adjustment_type = 'storage_boxes' then next_value else storage_boxes end,
     updated_at = now()
   where id = inventory_record.id;

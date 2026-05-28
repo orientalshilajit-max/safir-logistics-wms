@@ -7,8 +7,8 @@ import { useAuth } from "@/app/auth/auth-provider";
 import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
 import { supabase } from "@/app/lib/supabase";
 import type { Tables } from "@/app/types/database.types";
-import { EmptyState, ErrorBanner, inputClassName, LoadingState, Panel, StatusBadge } from "@/app/components/wms-ui";
-import { PencilIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
+import { Button, EmptyState, ErrorBanner, Field, inputClassName, LoadingState, Panel, StatusBadge, textAreaClassName } from "@/app/components/wms-ui";
+import { PencilIcon, SlidersIcon, TableActionButton, TableActionLink, TrashIcon } from "@/app/components/table-actions";
 
 type Client = Pick<Tables<"clients">, "id" | "company_name">;
 type Product = Tables<"products"> & {
@@ -20,12 +20,30 @@ type ProductInventoryRow = {
   received_qty: number;
   available_qty: number;
   damaged_qty: number;
+  shipped_qty: number;
 };
 type ProductHistoryRow = { product_id: string };
+type StockEditForm = {
+  available: string;
+  incoming: string;
+  damaged: string;
+  received: string;
+  shipped: string;
+  reason: string;
+};
 
 type StatusFilter = "active" | "archived" | "deleted" | "all";
 type DateFilter = "all" | "today" | "week" | "month" | "year";
 type SortFilter = "client" | "product" | "updated" | "status";
+
+const emptyStockEditForm: StockEditForm = {
+  available: "0",
+  incoming: "0",
+  damaged: "0",
+  received: "0",
+  shipped: "0",
+  reason: "",
+};
 
 export function ProductsClient() {
   const { role, clientId } = useAuth();
@@ -42,6 +60,9 @@ export function ProductsClient() {
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
   const [sortFilter, setSortFilter] = useState<SortFilter>("client");
   const [loading, setLoading] = useState(true);
+  const [editingStockProductId, setEditingStockProductId] = useState<string | null>(null);
+  const [stockForm, setStockForm] = useState<StockEditForm>(emptyStockEditForm);
+  const [savingStock, setSavingStock] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -68,7 +89,7 @@ export function ProductsClient() {
 
     let inventoryQuery = supabase
       .from("inventory")
-      .select("product_id, expected_qty, received_qty, available_qty, damaged_qty")
+      .select("product_id, expected_qty, received_qty, available_qty, damaged_qty, shipped_qty")
       .is("deleted_at", null);
 
     let incomingQuery = supabase
@@ -339,6 +360,87 @@ export function ProductsClient() {
     await loadData();
   }
 
+  function startStockEdit(product: Product) {
+    const stock = getProductStockSummary(inventoryByProductId.get(product.id));
+
+    setError(null);
+    setSuccess(null);
+    setEditingStockProductId(product.id);
+    setStockForm({
+      available: String(stock.available),
+      incoming: String(stock.incoming),
+      damaged: String(stock.damaged),
+      received: String(stock.received),
+      shipped: String(stock.shipped),
+      reason: "",
+    });
+  }
+
+  async function saveStockEdit(product: Product) {
+    if (savingStock) return;
+
+    const currentStock = getProductStockSummary(inventoryByProductId.get(product.id));
+    const nextStock = {
+      available: Number(stockForm.available),
+      incoming: Number(stockForm.incoming),
+      damaged: Number(stockForm.damaged),
+      received: Number(stockForm.received),
+      shipped: Number(stockForm.shipped),
+    };
+    const reason = stockForm.reason.trim();
+
+    if (Object.values(nextStock).some((value) => !Number.isFinite(value) || value < 0)) {
+      setError("Stock values must be zero or greater.");
+      return;
+    }
+
+    if (!reason) {
+      setError("Adjustment reason is required.");
+      return;
+    }
+
+    const adjustments = [
+      { type: "available_qty", delta: nextStock.available - currentStock.available },
+      {
+        type: "expected_qty",
+        delta: nextStock.received + nextStock.incoming - (currentStock.received + currentStock.incoming),
+      },
+      { type: "damaged_qty", delta: nextStock.damaged - currentStock.damaged },
+      { type: "received_qty", delta: nextStock.received - currentStock.received },
+      { type: "shipped_qty", delta: nextStock.shipped - currentStock.shipped },
+    ].filter((adjustment) => adjustment.delta !== 0);
+
+    if (adjustments.length === 0) {
+      setEditingStockProductId(null);
+      return;
+    }
+
+    setSavingStock(true);
+    setError(null);
+
+    for (const adjustment of adjustments) {
+      const { error: adjustmentError } = await supabase.rpc("adjust_inventory_with_audit", {
+        p_product_id: product.id,
+        p_client_id: product.client_id,
+        p_adjustment_type: adjustment.type,
+        p_quantity: adjustment.delta,
+        p_reason: reason,
+        p_notes: `Manual Products stock edit. Previous stock: available ${currentStock.available}, incoming ${currentStock.incoming}, damaged ${currentStock.damaged}, received ${currentStock.received}, shipped ${currentStock.shipped}. New stock: available ${nextStock.available}, incoming ${nextStock.incoming}, damaged ${nextStock.damaged}, received ${nextStock.received}, shipped ${nextStock.shipped}.`,
+      });
+
+      if (adjustmentError) {
+        setError(adjustmentError.message);
+        setSavingStock(false);
+        return;
+      }
+    }
+
+    setSuccess("Stock updated.");
+    setEditingStockProductId(null);
+    setSavingStock(false);
+    await loadData();
+  }
+
   if (loading) {
     return <LoadingState label="Loading products..." />;
   }
@@ -425,22 +527,17 @@ export function ProductsClient() {
           <table className="w-full table-fixed text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-[0.68rem] uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="w-[7%] px-3 py-2 font-semibold">Image</th>
-                <th className={isAdmin ? "w-[18%] px-2 py-2 font-semibold" : "w-[22%] px-2 py-2 font-semibold"}>Product Name</th>
-                {isAdmin ? <th className="w-[13%] px-2 py-2 font-semibold">Client</th> : null}
-                <th className="w-[10%] px-2 py-2 font-semibold">SKU</th>
-                <th className="w-[12%] px-2 py-2 font-semibold">ASIN / UPC</th>
-                <th className="w-[10%] px-2 py-2 font-semibold">FNSKU</th>
-                {isClientPortal ? (
-                  <>
-                    <th className="w-[8%] px-2 py-2 font-semibold">Available</th>
-                    <th className="w-[8%] px-2 py-2 font-semibold">Incoming</th>
-                    <th className="w-[8%] px-2 py-2 font-semibold">Damaged</th>
-                  </>
-                ) : null}
-                <th className="w-[8%] px-2 py-2 font-semibold">Status</th>
-                {isAdmin ? <th className="w-[10%] px-2 py-2 font-semibold">Last Updated</th> : null}
-                <th className="w-[12%] px-2 py-2 text-right font-semibold">Actions</th>
+                <th className="w-[6%] px-3 py-2 font-semibold">Image</th>
+                <th className={isAdmin ? "w-[15%] px-2 py-2 font-semibold" : "w-[24%] px-2 py-2 font-semibold"}>Product Name</th>
+                {isAdmin ? <th className="w-[10%] px-2 py-2 font-semibold">Client</th> : null}
+                <th className="w-[9%] px-2 py-2 font-semibold">SKU</th>
+                <th className="w-[11%] px-2 py-2 font-semibold">ASIN / UPC</th>
+                <th className="w-[8%] px-2 py-2 font-semibold">FNSKU</th>
+                <th className="w-[7%] px-2 py-2 font-semibold">Available</th>
+                <th className="w-[7%] px-2 py-2 font-semibold">Incoming</th>
+                <th className="w-[7%] px-2 py-2 font-semibold">Damaged</th>
+                <th className="w-[7%] px-2 py-2 font-semibold">Status</th>
+                <th className={isAdmin ? "w-[12%] px-2 py-2 text-right font-semibold" : "w-[11%] px-2 py-2 text-right font-semibold"}>Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -459,19 +556,23 @@ export function ProductsClient() {
                     <td className="px-2 py-2.5 text-xs text-slate-600">{product.sku ?? "-"}</td>
                     <td className="px-2 py-2.5 text-xs text-slate-600">{formatAsinUpc(product)}</td>
                     <td className="px-2 py-2.5 text-xs text-slate-600">{product.fnsku ?? "-"}</td>
-                    {isClientPortal ? (
-                      <>
-                        <td className="px-2 py-2.5 text-xs font-semibold tabular-nums text-emerald-700">{stock.available}</td>
-                        <td className="px-2 py-2.5 text-xs tabular-nums text-blue-700">{stock.incoming}</td>
-                        <td className="px-2 py-2.5 text-xs tabular-nums text-rose-700">{stock.damaged}</td>
-                      </>
-                    ) : null}
+                    <td className="px-2 py-2.5 text-xs font-semibold tabular-nums text-emerald-700">{stock.available}</td>
+                    <td className="px-2 py-2.5 text-xs tabular-nums text-blue-700">{stock.incoming}</td>
+                    <td className="px-2 py-2.5 text-xs tabular-nums text-rose-700">{stock.damaged}</td>
                     <td className="px-2 py-2.5">
                       <StatusBadge tone={product.deleted_at ? "rose" : product.active ? "emerald" : "slate"}>{product.deleted_at ? "Deleted" : product.active ? "Active" : "Archived"}</StatusBadge>
                     </td>
-                    {isAdmin ? <td className="px-2 py-2.5 text-xs leading-4 text-slate-500">{formatCompactDate(product.updated_at)}</td> : null}
                     <td className="px-2 py-2.5">
                       <div className="flex justify-end gap-1">
+                        {isAdmin ? (
+                          <TableActionButton
+                            title="Edit stock"
+                            aria-label={`Edit stock for ${product.product_name}`}
+                            onClick={() => startStockEdit(product)}
+                          >
+                            <SlidersIcon />
+                          </TableActionButton>
+                        ) : null}
                         <TableActionButton
                           title={isAdmin && clientFilter !== product.client_id ? "Select this client to reorder" : "Move up"}
                           aria-label={`Move ${product.product_name} up`}
@@ -529,6 +630,75 @@ export function ProductsClient() {
           </div>
         ) : null}
       </Panel>
+      {isAdmin && editingStockProductId ? (
+        <StockEditDialog
+          form={stockForm}
+          product={products.find((product) => product.id === editingStockProductId) ?? null}
+          saving={savingStock}
+          setForm={setStockForm}
+          onCancel={() => setEditingStockProductId(null)}
+          onSave={(product) => void saveStockEdit(product)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function StockEditDialog({
+  form,
+  onCancel,
+  onSave,
+  product,
+  saving,
+  setForm,
+}: {
+  form: StockEditForm;
+  onCancel: () => void;
+  onSave: (product: Product) => void;
+  product: Product | null;
+  saving: boolean;
+  setForm: (form: StockEditForm) => void;
+}) {
+  if (!product) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4">
+      <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-950">Edit Stock</h3>
+          <p className="mt-1 text-sm text-slate-500">{product.product_name}</p>
+        </div>
+        <div className="grid gap-4 p-5 sm:grid-cols-2">
+          <Field label="Available">
+            <input className={inputClassName} min="0" type="number" value={form.available} onChange={(event) => setForm({ ...form, available: event.target.value })} />
+          </Field>
+          <Field label="Incoming">
+            <input className={inputClassName} min="0" type="number" value={form.incoming} onChange={(event) => setForm({ ...form, incoming: event.target.value })} />
+          </Field>
+          <Field label="Damaged">
+            <input className={inputClassName} min="0" type="number" value={form.damaged} onChange={(event) => setForm({ ...form, damaged: event.target.value })} />
+          </Field>
+          <Field label="Received">
+            <input className={inputClassName} min="0" type="number" value={form.received} onChange={(event) => setForm({ ...form, received: event.target.value })} />
+          </Field>
+          <Field label="Shipped">
+            <input className={inputClassName} min="0" type="number" value={form.shipped} onChange={(event) => setForm({ ...form, shipped: event.target.value })} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Adjustment reason / note">
+              <textarea className={textAreaClassName} required value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
+            </Field>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={saving} onClick={() => onSave(product)}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -619,13 +789,15 @@ function getProductActionLabel(product: Product, historyProductIds: Set<string>)
 
 function getProductStockSummary(row: ProductInventoryRow | undefined) {
   if (!row) {
-    return { available: 0, incoming: 0, damaged: 0 };
+    return { available: 0, incoming: 0, damaged: 0, received: 0, shipped: 0 };
   }
 
   return {
     available: row.available_qty,
     incoming: Math.max(row.expected_qty - row.received_qty, 0),
     damaged: row.damaged_qty,
+    received: row.received_qty,
+    shipped: row.shipped_qty,
   };
 }
 
@@ -657,18 +829,6 @@ function isWithinDateFilter(value: string, filter: DateFilter) {
 function formatAsinUpc(product: Product) {
   const values = [product.asin, product.barcode].filter(Boolean);
   return values.length > 0 ? values.join(" / ") : "-";
-}
-
-function formatCompactDate(value: string) {
-  const date = new Date(value);
-
-  return (
-    <>
-      {new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date)}
-      <br />
-      {new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(date)}
-    </>
-  );
 }
 
 function formatNumber(value: number) {
