@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/app/auth/auth-provider";
 import { CLIENT_ACCOUNT_LINK_ERROR } from "@/app/lib/auth";
@@ -383,13 +384,12 @@ export function DocumentsClient() {
               <EmptyState title="No files found" body="Files shared with your account will appear here." />
             ) : (
               <div className="max-h-[42rem] overflow-auto">
-                <table className={`${tableClassName} min-w-[980px]`}>
+                <table className={`${tableClassName} min-w-[820px]`}>
                   <thead className={tableHeadClassName}>
                     <tr>
-                      <th className={`${tableCellClassName} font-semibold`}>File Name</th>
+                      <th className={`${tableCellClassName} font-semibold`}>Preview / File</th>
                       <th className={`${tableCellClassName} font-semibold`}>Folder / Category</th>
                       <th className={`${tableCellClassName} font-semibold`}>Type</th>
-                      <th className={`${tableCellClassName} font-semibold`}>Size</th>
                       <th className={`${tableCellClassName} font-semibold`}>Uploaded By</th>
                       <th className={`${tableCellClassName} font-semibold`}>Upload Date</th>
                       <th className={`${tableCellClassName} font-semibold`}>Actions</th>
@@ -398,15 +398,11 @@ export function DocumentsClient() {
                   <tbody className="divide-y divide-slate-100">
                     {clientDocuments.map((document) => (
                       <tr key={document.id} className="hover:bg-slate-50">
-                        <td className={`${tableCellClassName} font-medium text-slate-950`}>
-                          <div className="flex items-center gap-3">
-                            <FileIcon type={getFileType(document)} />
-                            <span>{document.file_name}</span>
-                          </div>
+                        <td className={`${tableCellClassName} max-w-sm font-medium text-slate-950`}>
+                          <FilePreviewCell document={document} />
                         </td>
                         <td className={`${tableCellClassName} text-slate-600`}>{documentFolder(document)}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{getFileType(document).toUpperCase()}</td>
-                        <td className={`${tableCellClassName} text-slate-600`}>-</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{formatRole(document.uploaded_by_role)}</td>
                         <td className={`${tableCellClassName} text-slate-600`}>{formatDate(document.created_at)}</td>
                         <td className={tableCellClassName}>
@@ -422,6 +418,13 @@ export function DocumentsClient() {
                             <Button type="button" variant="secondary" onClick={() => openPrintView(document)}>
                               Preview
                             </Button>
+                            <a
+                              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                              href={document.preview_url ?? document.file_url}
+                              download={document.file_name}
+                            >
+                              Download
+                            </a>
                           </div>
                         </td>
                       </tr>
@@ -551,59 +554,39 @@ export function DocumentsClient() {
             />
           ) : (
             <div className="max-h-[34rem] overflow-auto">
-              <table className={`${tableClassName} min-w-[980px]`}>
+              <table className={`${tableClassName} min-w-[900px]`}>
                 <thead className={tableHeadClassName}>
                   <tr>
-                    <th className={`${tableCellClassName} font-semibold`}>File</th>
-                    <th className={`${tableCellClassName} font-semibold`}>Scope</th>
-                    {isAdmin ? <th className={`${tableCellClassName} font-semibold`}>Client</th> : null}
-                    <th className={`${tableCellClassName} font-semibold`}>Category</th>
-                    <th className={`${tableCellClassName} font-semibold`}>Visibility</th>
-                    <th className={`${tableCellClassName} font-semibold`}>Uploaded by</th>
-                    <th className={`${tableCellClassName} font-semibold`}>Related</th>
-                    <th className={`${tableCellClassName} font-semibold`}>Created</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Preview / File</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Folder / Category</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Type</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Uploaded By</th>
+                    <th className={`${tableCellClassName} font-semibold`}>Upload Date</th>
                     <th className={`${tableCellClassName} font-semibold`}>Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredDocuments.map((document) => (
                     <tr key={document.id} className="hover:bg-slate-50">
-                      <td className={`${tableCellClassName} font-medium text-slate-950`}>
-                        <div className="flex items-center gap-3">
-                          <FileIcon type={getFileType(document)} />
-                          <div>
-                            <div>{document.file_name}</div>
-                            {document.note ? (
-                              <div className="mt-1 max-w-xs truncate text-xs font-normal text-slate-500">
-                                {document.note}
-                              </div>
-                            ) : null}
+                      <td className={`${tableCellClassName} max-w-sm font-medium text-slate-950`}>
+                        <FilePreviewCell document={document} />
+                      </td>
+                      <td className={`${tableCellClassName} text-slate-600`}>
+                        <div className="space-y-1">
+                          <p>{documentFolder(document)}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            <StatusBadge tone={document.file_scope === "global" ? "indigo" : "blue"}>
+                              {formatScope(document.file_scope)}
+                            </StatusBadge>
+                            <StatusBadge tone={document.visible_to_client ? "emerald" : "slate"}>
+                              {document.visible_to_client ? "Visible" : "Internal"}
+                            </StatusBadge>
                           </div>
                         </div>
                       </td>
-                      <td className={tableCellClassName}>
-                        <StatusBadge tone={document.file_scope === "global" ? "indigo" : "blue"}>
-                          {formatScope(document.file_scope)}
-                        </StatusBadge>
-                      </td>
-                      {isAdmin ? (
-                        <td className={`${tableCellClassName} text-slate-600`}>
-                          {document.file_scope === "global" ? "All clients" : document.clients?.company_name ?? "Unknown"}
-                        </td>
-                      ) : null}
-                      <td className={tableCellClassName}>
-                        <StatusBadge tone="blue">{document.category}</StatusBadge>
-                      </td>
-                      <td className={tableCellClassName}>
-                        <StatusBadge tone={document.visible_to_client ? "emerald" : "slate"}>
-                          {document.visible_to_client ? "Visible to client" : "Internal only"}
-                        </StatusBadge>
-                      </td>
+                      <td className={`${tableCellClassName} text-slate-600`}>{getFileType(document).toUpperCase()}</td>
                       <td className={`${tableCellClassName} text-slate-600`}>
                         {formatRole(document.uploaded_by_role)}
-                      </td>
-                      <td className={`${tableCellClassName} text-slate-600`}>
-                        {formatRelated(document)}
                       </td>
                       <td className={`${tableCellClassName} text-slate-600`}>
                         {formatDate(document.created_at)}
@@ -632,6 +615,14 @@ export function DocumentsClient() {
                           <Button type="button" variant="secondary" className="size-8 px-0" onClick={() => openPrintView(document)}>
                             Pr
                           </Button>
+                          <a
+                            className="inline-flex size-8 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-950"
+                            href={document.preview_url ?? document.file_url}
+                            download={document.file_name}
+                            title="Download"
+                          >
+                            D
+                          </a>
                           {isAdmin ? (
                             <>
                               <Button type="button" variant="secondary" className="size-8 px-0" disabled={updatingId === document.id} onClick={() => void toggleVisibility(document)}>
@@ -742,24 +733,89 @@ function FileMetric({
   );
 }
 
-function FileIcon({ type }: { type: string }) {
+function FilePreviewCell({ document }: { document: DocumentFile }) {
+  const type = getFileType(document);
+  const url = document.preview_url ?? document.file_url;
+
+  return (
+    <button
+      type="button"
+      className="group flex min-w-0 items-center gap-3 text-left"
+      onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+    >
+      <FileThumbnail document={document} type={type} />
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-slate-950">{document.file_name}</span>
+        <span className="mt-0.5 block truncate text-xs font-normal text-slate-500">
+          {document.note || formatFileMeta(document)}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function FileThumbnail({ document, type }: { document: DocumentFile; type: string }) {
+  const url = document.preview_url ?? document.file_url;
+
+  if (isImageFile(document)) {
+    return (
+      <span className="block size-14 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100 transition group-hover:scale-105 sm:size-16">
+        <Image
+          alt=""
+          className="size-full object-cover"
+          height={64}
+          loading="lazy"
+          src={url}
+          unoptimized
+          width={64}
+        />
+      </span>
+    );
+  }
+
+  return <FileIcon type={type} large />;
+}
+
+function FileIcon({ type, large = false }: { type: string; large?: boolean }) {
   const normalized = type.toLowerCase();
   const color =
     normalized === "pdf"
       ? "bg-rose-50 text-rose-700"
-      : ["png", "jpg", "jpeg", "webp"].includes(normalized)
+      : ["png", "jpg", "jpeg", "webp", "gif"].includes(normalized)
         ? "bg-amber-50 text-amber-700"
         : ["xls", "xlsx", "csv"].includes(normalized)
           ? "bg-emerald-50 text-emerald-700"
-          : normalized.includes("doc")
+          : ["doc", "docx"].includes(normalized)
             ? "bg-blue-50 text-blue-700"
-            : "bg-slate-100 text-slate-600";
+            : ["zip", "rar"].includes(normalized)
+              ? "bg-indigo-50 text-indigo-700"
+              : "bg-slate-100 text-slate-600";
 
   return (
-    <span className={`flex size-8 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold uppercase ${color}`}>
-      {normalized.slice(0, 3)}
+    <span className={`flex shrink-0 items-center justify-center rounded-md border border-transparent text-[10px] font-semibold uppercase transition group-hover:scale-105 ${large ? "size-14 sm:size-16" : "size-8"} ${color}`}>
+      {fileIconLabel(normalized)}
     </span>
   );
+}
+
+function isImageFile(document: DocumentFile) {
+  return document.mime_type?.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif"].includes(getFileType(document));
+}
+
+function fileIconLabel(type: string) {
+  if (type === "pdf") return "PDF";
+  if (["doc", "docx"].includes(type)) return "DOC";
+  if (["xls", "xlsx", "csv"].includes(type)) return "XLS";
+  if (["zip", "rar"].includes(type)) return "ZIP";
+  if (["png", "jpg", "jpeg", "webp", "gif"].includes(type)) return "IMG";
+  return "FILE";
+}
+
+function formatFileMeta(document: DocumentFile) {
+  const related = formatRelated(document);
+  const owner = document.file_scope === "global" ? "All clients" : document.clients?.company_name ?? "Client file";
+
+  return related === "-" ? owner : `${owner} - ${related}`;
 }
 
 function getFileType(document: DocumentFile) {
